@@ -171,16 +171,160 @@ int Map(unsigned addr, unsigned len, VMEMAP *map, int fd)
     return rc;
 }
 
+int process(char *cmd, int fd, VMEMAP *map, char mode)
+{
+    const char DELIM[] = " \t\n\r:=";
+    char *tok;
+    unsigned addr, len;
+    int N;
+
+    tok = strtok(cmd, DELIM);
+    if (tok == NULL || strlen(tok) == 0) return 0;
+    switch(toupper(tok[0])) {
+    case '*':	// Comment
+        break;
+    case '0':
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+    case '7':
+    case '8':
+    case '9':
+    case 'A':
+    case 'B':
+    case 'C':
+    case 'D':
+    case 'E':
+    case 'F':
+        if (map->ptr == NULL) {
+    	    printf("Map some region first.\n");
+	    break;
+	}
+	addr = strtoul(tok, NULL, 16);
+	if (addr+4 > map->len) {
+	    printf("Shift (%8.8X) above the mapped length (%8.8X)\n", addr, map->len);
+	    break;
+	}
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL || strlen(tok) == 0) {	// read
+	    switch (mode) {
+	    case 'L':
+	        printf("VME[%8.8X + %8.8X] = %8.8X\n", map->addr, addr, SWAP(map->ptr[addr/4]));
+	        break;
+	    case 'S':
+	        printf("VME[%8.8X + %8.8X] = %4.4hX\n", map->addr, addr, SWAP2(((unsigned short *)map->ptr)[addr/2]) & 0xFFFF);
+	        break;
+	    case 'C':
+	        printf("VME[%8.8X + %8.8X] = %2.2hhX\n", map->addr, addr, ((unsigned char *)map->ptr)[addr] & 0xFF);
+	        break;
+	    }
+	} else {					// write
+	    len = strtoul(tok, NULL, 16);
+	    switch (mode) {
+	    case 'L':
+	        map->ptr[addr/4] = SWAP(len);
+	        printf("VME[%8.8X + %8.8X] <= %8.8X\n", map->addr, addr, len);
+	        break;
+	    case 'S':
+	        ((unsigned short *)map->ptr)[addr/2] = SWAP2(len) & 0xFFFF;
+	        printf("VME[%8.8X + %8.8X] <= %4.4X\n", map->addr, addr, len);
+	        break;
+	    case 'C':
+	        ((unsigned char *)map->ptr)[addr] = len & 0xFF;
+	        printf("VME[%8.8X + %8.8X] <= %2.2X\n", map->addr, addr, len);
+	        break;
+	    }
+	}
+	break;
+    case 'H':	// help
+        Help();
+        break;
+    case 'M':	// Map address length
+        tok = strtok(NULL, DELIM);
+        if (tok == NULL || strlen(tok) == 0) {
+    	    printf("VME region [%8.8X-%8.8X] is mapped at local address %8.8X\n",
+    		map->addr, map->addr + map->len - 1, map->ptr);
+	    break;
+	}
+	addr = strtoul(tok, NULL, 16);
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL || strlen(tok) == 0) {
+	    printf("Usage: Map address length\n");
+	    break;
+	}
+	len = strtoul(tok, NULL, 16);
+	Map(addr, len, map, fd);
+	break;
+    case 'P':	// Print [address [length]]
+        if (map->ptr == NULL) {
+	    printf("Map some region first.\n");
+	    break;
+	}
+	addr = 0;
+	len = map->len;
+	tok = strtok(NULL, DELIM);
+	if (tok != NULL && strlen(tok) != 0) {
+	    addr = strtoul(tok, NULL, 16);
+	    tok = strtok(NULL, DELIM);
+	    if (tok != NULL && strlen(tok) != 0) len = strtoul(tok, NULL, 16);
+	}
+	Dump(addr, len, map);
+	break;
+    case 'Q' :	// Quit / Exit
+    case 'X' :
+        return 1;
+    case 'R' :	// register read/write test
+	if (map->ptr == NULL) {
+	    printf("Map the region first. Most likely you need:\n\tM ADC16000 2000\n");
+	    break;
+	}
+	len = 10000;	// repeat counter
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL || strlen(tok) == 0) {
+	    printf("Unit number is mandatory.\n");
+	    break;
+	}
+	N = 0x1F & strtol(tok, NULL, 16);
+	tok = strtok(NULL, DELIM);
+	if (tok != NULL && strlen(tok) != 0) len = strtoul(tok, NULL, 16);
+	RegTest(N, len, map);
+	break;
+    case 'T' :	// test memory
+        if (map->ptr == NULL) {
+    	    printf("Map the region first. Most likely you need:\n\tM ADC16000 2000\n");
+	    break;
+	}
+	addr = 0;
+	len = 0x800000;	// 32 Mbytes = 8 Mdwords
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL || strlen(tok) == 0) {
+	    printf("Unit number is mandatory.\n");
+	    break;
+	}
+	N = 0x1F & strtol(tok, NULL, 16);
+	tok = strtok(NULL, DELIM);
+	if (tok != NULL && strlen(tok) != 0) {
+	    addr = strtoul(tok, NULL, 16);
+	    tok = strtok(NULL, DELIM);
+	    if (tok != NULL && strlen(tok) != 0) len = strtoul(tok, NULL, 16);
+	}
+	MemTest(N, addr, len, map);
+	break;
+    default:
+	printf("Unknown command \"%c\"\n", toupper(tok[0]));
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     int fd;
     int rc;
     char *cmd = NULL;
     VMEMAP map = {0, 0, NULL};
-    const char DELIM[] = " \t\n\r:=";
-    char *tok;
-    unsigned addr, len;
-    int N;
     char mode;	// Long - D32, Short - D16, Char - D8
     VME4L_SPACE spc, spcr;
     vmeaddr_t vmeaddr;
@@ -207,145 +351,9 @@ int main(int argc, char **argv)
 	cmd = readline("VmeBur (H-help)>");
 	if (cmd == NULL || strlen(cmd) == 0) continue;
 	add_history(cmd);
-	tok = strtok(cmd, DELIM);
-	if (tok == NULL || strlen(tok) == 0) continue;
-	switch(toupper(tok[0])) {
-	case '*':	// Comment
-	    break;
-	case '0':
-	case '1':
-	case '2':
-	case '3':
-	case '4':
-	case '5':
-	case '6':
-	case '7':
-	case '8':
-	case '9':
-	case 'A':
-	case 'B':
-	case 'C':
-	case 'D':
-	case 'E':
-	case 'F':
-	    if (map.ptr == NULL) {
-		printf("Map some region first.\n");
-		break;
-	    }
-	    addr = strtoul(tok, NULL, 16);
-	    if (addr+4 > map.len) {
-		printf("Shift (%8.8X) above the mapped length (%8.8X)\n", addr, map.len);
-	    }
-	    tok = strtok(NULL, DELIM);
-	    if (tok == NULL || strlen(tok) == 0) {	// read
-		switch (mode) {
-		case 'L':
-		    printf("VME[%8.8X + %8.8X] = %8.8X\n", map.addr, addr, SWAP(map.ptr[addr/4]));
-		    break;
-		case 'S':
-		    printf("VME[%8.8X + %8.8X] = %4.4hX\n", map.addr, addr, SWAP2(((unsigned short *)map.ptr)[addr/2]) & 0xFFFF);
-		    break;
-		case 'C':
-		    printf("VME[%8.8X + %8.8X] = %2.2hhX\n", map.addr, addr, ((unsigned char *)map.ptr)[addr] & 0xFF);
-		    break;
-		}
-	    } else {					// write
-		len = strtoul(tok, NULL, 16);
-		switch (mode) {
-		case 'L':
-		    map.ptr[addr/4] = SWAP(len);
-		    printf("VME[%8.8X + %8.8X] <= %8.8X\n", map.addr, addr, len);
-		    break;
-		case 'S':
-		    ((unsigned short *)map.ptr)[addr/2] = SWAP2(len) & 0xFFFF;
-		    printf("VME[%8.8X + %8.8X] <= %4.4X\n", map.addr, addr, len);
-		    break;
-		case 'C':
-		    ((unsigned char *)map.ptr)[addr] = len & 0xFF;
-		    printf("VME[%8.8X + %8.8X] <= %2.2X\n", map.addr, addr, len);
-		    break;
-		}
-	    }
-	    rc = VME4L_BusErrorGet(fd, &spcr, &vmeaddr, 1 );
-	    if (rc) printf("VME BUS ERROR: rc=%d @ spc=%d addr=0x%X\n", rc, spcr, vmeaddr);
-	    break;
-	case 'H':	// help
-	    Help();
-	    break;
-	case 'M':	// Map address length
-	    tok = strtok(NULL, DELIM);
-	    if (tok == NULL || strlen(tok) == 0) {
-		printf("VME region [%8.8X-%8.8X] is mapped at local address %8.8X\n",
-		    map.addr, map.addr + map.len - 1, map.ptr);
-		break;
-	    }
-	    addr = strtoul(tok, NULL, 16);
-	    tok = strtok(NULL, DELIM);
-	    if (tok == NULL || strlen(tok) == 0) {
-		printf("Usage: Map address length\n");
-		break;
-	    }
-	    len = strtoul(tok, NULL, 16);
-	    Map(addr, len, &map, fd);
-	    break;
-	case 'P':	// Print [address [length]]
-	    if (map.ptr == NULL) {
-		printf("Map some region first.\n");
-		break;
-	    }
-	    addr = 0;
-	    len = map.len;
-	    tok = strtok(NULL, DELIM);
-	    if (tok != NULL && strlen(tok) != 0) {
-		addr = strtoul(tok, NULL, 16);
-		tok = strtok(NULL, DELIM);
-		if (tok != NULL && strlen(tok) != 0) len = strtoul(tok, NULL, 16);
-	    }
-	    Dump(addr, len, &map);
-	    break;
-	case 'Q' :	// Quit / Exit
-	case 'X' :
-	    goto Quit;
-	case 'R' :	// register read/write test
-	    if (map.ptr == NULL) {
-		printf("Map the region first. Most likely you need:\n\tM ADC16000 2000\n");
-		break;
-	    }
-	    len = 10000;	// repeat counter
-	    tok = strtok(NULL, DELIM);
-	    if (tok == NULL || strlen(tok) == 0) {
-		printf("Unit number is mandatory.\n");
-		break;
-	    }
-	    N = 0x1F & strtol(tok, NULL, 16);
-	    tok = strtok(NULL, DELIM);
-	    if (tok != NULL && strlen(tok) != 0) len = strtoul(tok, NULL, 16);
-	    RegTest(N, len, &map);
-	    break;
-	case 'T' :	// test memory
-	    if (map.ptr == NULL) {
-		printf("Map the region first. Most likely you need:\n\tM ADC16000 2000\n");
-		break;
-	    }
-	    addr = 0;
-	    len = 0x800000;	// 32 Mbytes = 8 Mdwords
-	    tok = strtok(NULL, DELIM);
-	    if (tok == NULL || strlen(tok) == 0) {
-		printf("Unit number is mandatory.\n");
-		break;
-	    }
-	    N = 0x1F & strtol(tok, NULL, 16);
-	    tok = strtok(NULL, DELIM);
-	    if (tok != NULL && strlen(tok) != 0) {
-		addr = strtoul(tok, NULL, 16);
-		tok = strtok(NULL, DELIM);
-		if (tok != NULL && strlen(tok) != 0) len = strtoul(tok, NULL, 16);
-	    }
-	    MemTest(N, addr, len, &map);
-	    break;
-	default:
-	    printf("Unknown command \"%c\"\n", toupper(tok[0]));
-	}
+	if (process(cmd, fd, &map, mode)) break;
+	rc = VME4L_BusErrorGet(fd, &spcr, &vmeaddr, 1 );
+	if (rc) printf("VME BUS ERROR: rc=%d @ spc=%d addr=0x%X\n", rc, spcr, vmeaddr);
     }
 Quit:
     
