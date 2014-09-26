@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <MEN/vme4l.h>
 #include <MEN/vme4l_api.h>
 #include <readline/readline.h>
@@ -27,6 +28,14 @@ typedef struct {
     unsigned len;
     unsigned *ptr;
 } VMEMAP;
+
+void usleep(int num)
+{
+    struct timespec tm;
+    tm.tv_sec = num / 1000000;
+    tm.tv_nsec = (num % 1000000) * 1000;
+    nanosleep(&tm, NULL);
+}
 
 unsigned __swap(unsigned i)
 {
@@ -145,6 +154,7 @@ void Help(void)
     printf("\tOptions:\n");
     printf("-h - print this message\n");
     printf("-m{L|S|C} - data size: Long, Short, Char\n");
+    printf("-q - quiet start\n");
     printf("-sNN - use space NN. Spaces:\n");
     for (i=0; i<30; i++) printf("%2.2d - %s%c", i, VME4L_SpaceName(i), ((i%5)==4) ? '\n' : '\t');
     printf("master6 is now mapped to A16D16 and master7 to CSR space.\n");
@@ -158,6 +168,7 @@ void Help(void)
     printf("Q|X - quit\n");
     printf("R N [repeat] - test read/write a pair of ADC16 registers (addr/trgicnt) for module N.\n");
     printf("T N [addr [len]] - test ADC16 memory for module N.\n");
+    printf("W [N] - wait N us, if no N - 1 ms\n");
     printf("AAAA[=XXXX] - read address AAAA / write XXXX to AAAA\n");
     printf("Only the first letter of the command is decoded.\n");
     printf("ALL (!) input numbers are hexadecimal.\n");
@@ -325,6 +336,11 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	}
 	MemTest(N, addr, len, map);
 	break;
+    case 'W' :	// wait us
+	tok = strtok(NULL, DELIM);
+	N = (tok == NULL || strlen(tok) == 0) ? 1000 : strtol(tok, NULL, 16);
+	usleep(N);
+	break;
     default:
 	printf("Unknown command \"%c\"\n", toupper(tok[0]));
     }
@@ -344,6 +360,7 @@ int main(int argc, char **argv)
     VME4L_SPACE spc, spcr;
     vmeaddr_t vmeaddr;
     int i, j;
+    int quiet = 0;
     
     spc = VME4L_SPC_A32_D32;
     mode = 'L';
@@ -359,6 +376,9 @@ int main(int argc, char **argv)
 		Help();
 		goto Quit;
 	    }
+	    break;
+	case 'Q':
+	    quiet = 1;
 	    break;
 	case 'S':
 	    spc = strtol(&argv[i][2], NULL, 0);
@@ -377,7 +397,8 @@ int main(int argc, char **argv)
 	}
     }
 
-    printf("\n\n\t\tManual VME controller: %s - %c\n\t\t\tSvirLex 2012\n\n", VME4L_SpaceName(spc), mode);
+    if (!quiet) 
+	printf("\n\n\t\tManual VME controller: %s - %c\n\t\t\tSvirLex 2012\n\n", VME4L_SpaceName(spc), mode);
 //	Open VME
     fd = VME4L_Open(spc);
     if (fd < 0) {
