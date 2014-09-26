@@ -139,12 +139,24 @@ void MemTest(int N, unsigned addr, unsigned len, VMEMAP *map)
 
 void Help(void)
 {
+    int i;
+    printf("\t ----- VME debug tool -----\n");
+    printf("Command line: vmebur [options] [\"command(s)\"]\n");
+    printf("\tOptions:\n");
+    printf("-h - print this message\n");
+    printf("-m{L|S|C} - data size: Long, Short, Char\n");
+    printf("-sNN - use space NN. Spaces:\n");
+    for (i=0; i<30; i++) printf("%2.2d - %s%c", i, VME4L_SpaceName(i), ((i%5)==4) ? '\n' : '\t');
+    printf("master6 is now mapped to A16D16 and master7 to CSR space.\n");
+    printf("Command(s) should be enclosed in quotes and can be separated by semicolon.\n");
+    printf("If no command is given - interactive mode is entered.\n");
+    printf("\tCommands:\n");
     printf("* - nothing - just a comment\n");
     printf("H - print this help message\n");
     printf("M [addr len] - map a region (query mapping).\n");
     printf("P [addr [len]] - dump the region. Address is counted from mapped start.\n");
     printf("Q|X - quit\n");
-    printf("R N [repeat] - test read/write a pair of registers (addr/trgicnt) for module N.\n");
+    printf("R N [repeat] - test read/write a pair of ADC16 registers (addr/trgicnt) for module N.\n");
     printf("T N [addr [len]] - test ADC16 memory for module N.\n");
     printf("AAAA[=XXXX] - read address AAAA / write XXXX to AAAA\n");
     printf("Only the first letter of the command is decoded.\n");
@@ -171,7 +183,7 @@ int Map(unsigned addr, unsigned len, VMEMAP *map, int fd)
     return rc;
 }
 
-int process(char *cmd, int fd, VMEMAP *map, char mode)
+int Process(char *cmd, int fd, VMEMAP *map, char mode)
 {
     const char DELIM[] = " \t\n\r:=";
     char *tok;
@@ -324,15 +336,47 @@ int main(int argc, char **argv)
     int fd;
     int rc;
     char *cmd = NULL;
+    char *command = NULL;
+    char tok[256];
+    char *ptr;
     VMEMAP map = {0, 0, NULL};
     char mode;	// Long - D32, Short - D16, Char - D8
     VME4L_SPACE spc, spcr;
     vmeaddr_t vmeaddr;
+    int i, j;
     
-    spc = (argc > 1) ? strtol(argv[1], NULL, 0) : 8;
-    mode = (argc > 2) ? toupper(argv[2][0]) : 'L';
-    if (mode != 'L' && mode != 'S' && mode != 'C') mode = 'L';
-    
+    spc = VME4L_SPC_A32_D32;
+    mode = 'L';
+    for (i=1; i<argc; i++) {
+	if (argv[i][0] == '-') switch (toupper(argv[i][1])) {
+	case 'H':
+	    Help();
+	    goto Quit;
+	case 'M':
+	    mode = toupper(argv[i][2]);
+	    if (mode != 'L' && mode != 'S' && mode != 'C') {
+		printf("Unknown mode: %s\n", argv[i]);
+		Help();
+		goto Quit;
+	    }
+	    break;
+	case 'S':
+	    spc = strtol(&argv[i][2], NULL, 0);
+	    if (spc < 0 || spc >= 30) {
+		printf("Unknown space: %s\n", argv[i]);
+		Help();
+		goto Quit;
+	    }
+	    break;
+	default:
+	    printf("Unknown option: %s\n", argv[i]);
+	    Help();
+	    goto Quit;
+	} else {
+	    command = argv[i];
+	}
+    }
+
     printf("\n\n\t\tManual VME controller: %s - %c\n\t\t\tSvirLex 2012\n\n", VME4L_SpaceName(spc), mode);
 //	Open VME
     fd = VME4L_Open(spc);
@@ -346,14 +390,39 @@ int main(int argc, char **argv)
 	goto Quit;
     }
 
-    for(;;) {
-	if (cmd) free(cmd);
-	cmd = readline("VmeBur (H-help)>");
-	if (cmd == NULL || strlen(cmd) == 0) continue;
-	add_history(cmd);
-	if (process(cmd, fd, &map, mode)) break;
-	rc = VME4L_BusErrorGet(fd, &spcr, &vmeaddr, 1 );
-	if (rc) printf("VME BUS ERROR: rc=%d @ spc=%d addr=0x%X\n", rc, spcr, vmeaddr);
+    if (command) {
+	ptr = command;
+	for (;ptr[0] != '\0';) {
+	    for (j=0; j < sizeof(tok)-1; j++) {
+	        if (ptr[j] == ';') {
+	    	    tok[j] = '\0';
+		    ptr += j+1;
+		    break;
+		} else if (ptr[j] == '\0') {
+	    	    tok[j] = '\0';
+		    ptr += j;
+		    break;
+		} else {
+		    tok[j] = ptr[j];
+		}
+	    }
+	    if (j < sizeof(tok)-1) {
+		Process(tok, fd, &map, mode);
+	    } else {
+		printf("The single operation is too long: %s\n", ptr);
+		break;
+	    }
+	}
+    } else {
+	for(;;) {
+	    if (cmd) free(cmd);
+	    cmd = readline("VmeBur (H-help)>");
+	    if (cmd == NULL || strlen(cmd) == 0) continue;
+	    add_history(cmd);
+	    if (Process(cmd, fd, &map, mode)) break;
+	    rc = VME4L_BusErrorGet(fd, &spcr, &vmeaddr, 1 );
+	    if (rc) printf("VME BUS ERROR: rc=%d @ spc=%d addr=0x%X\n", rc, spcr, vmeaddr);
+	}
     }
 Quit:
     
