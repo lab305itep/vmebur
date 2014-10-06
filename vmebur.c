@@ -25,6 +25,8 @@
 
 #define ICXSPI		0x10010	// ICX SPI base address
 #define ICXTMOUT	100	// ICX timeout counter
+#define DACSPI		0x10020	// DAC SPI base address
+#define DACTMOUT	100	// DAC timeout counter
 #define I2CCLK		0x20000 // Local I2C (CLK control)
 #define I2CTMOUT	1000	// I2C timeout counter
 
@@ -231,7 +233,7 @@ int ICXRead(VMEMAP *map, int addr)
     return data;
 }
 
-int ICXWrite(VMEMAP *map, int addr, int data)
+void ICXWrite(VMEMAP *map, int addr, int data)
 {
     int i;
     
@@ -245,6 +247,18 @@ int ICXWrite(VMEMAP *map, int addr, int data)
     map->ptr[ICXSPI/4] = SWAP(data & 0xFF);
     for (i=0; i<ICXTMOUT; i++) if (!(0x8000 & SWAP(map->ptr[ICXSPI/4]))) break;
     map->ptr[ICXSPI/4 + 1] = 0;
+}
+
+void DACWrite(VMEMAP *map, int data)
+{
+    int i;
+    
+    map->ptr[DACSPI/4 + 1] = SWAP(1);		// crystall select
+    map->ptr[DACSPI/4] = SWAP((data >> 8) & 0xFF);
+    for (i=0; i<DACTMOUT; i++) if (!(0x8000 & SWAP(map->ptr[DACSPI/4]))) break;
+    map->ptr[DACSPI/4] = SWAP(data & 0xFF);
+    for (i=0; i<DACTMOUT; i++) if (!(0x8000 & SWAP(map->ptr[DACSPI/4]))) break;
+    map->ptr[DACSPI/4 + 1] = 0;
 }
 
 void Help(void)
@@ -269,6 +283,7 @@ void Help(void)
     printf("P [addr [len]] - dump the region. Address is counted from mapped start. 32-bit operations only.\n");
     printf("Q - quit;\n");
     printf("R N [repeat] - test read/write a pair of ADC16 registers (addr/trgicnt) for module N;\n");
+    printf("S data - write data to local DAC;\n");
     printf("T N [addr [len]] - test ADC16 memory for module N;\n");
     printf("W [N] - wait N us, if no N - 1 ms;\n");
     printf("X addr[=XXXX] - interXilinx SPI read/write;\n");
@@ -440,6 +455,24 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	tok = strtok(NULL, DELIM);
 	if (tok != NULL && strlen(tok) != 0) len = strtoul(tok, NULL, 16);
 	RegTest(N, len, map);
+	break;
+    case 'S' :	// SPI to DAC
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL) {
+	    Help();
+	    break;
+	}
+        if (map->ptr == NULL) {
+    	    printf("Map some region first.\n");
+	    break;
+	}
+	if (DACSPI+8 > map->len) {
+	    printf("ICX SPI registers (%8.8X) above the mapped length (%8.8X)\n", DACSPI+8, map->len);
+	    break;
+	}
+	N = strtoul(tok, NULL, 16) & 0xFFFF;
+	DACWrite(map, N);
+	printf("DAC <= %4.4X\n", N);
 	break;
     case 'T' :	// test memory
         if (map->ptr == NULL) {
