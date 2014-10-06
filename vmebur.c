@@ -23,6 +23,12 @@
 #define SWAP2(A) (A)
 #endif
 
+#define ICXSPI		0x10010	// ICX SPI base address
+#define ICXTMOUT	100	// ICX timeout counter
+#define I2CCLK		0x20000 // Local I2C (CLK control)
+#define I2CTMOUT	1000	// I2C timeout counter
+
+
 typedef struct {
     unsigned addr;
     unsigned len;
@@ -146,6 +152,101 @@ void MemTest(int N, unsigned addr, unsigned len, VMEMAP *map)
     printf("ADC16 memory test finished with %d errors\n", err);
 }
 
+int I2CRead(VMEMAP *map, int addr)
+{
+    int i, data;
+//	Chip address
+    map->ptr[I2CCLK/4+3] = (addr >> 7) & 0xFE;	// no SWAP here and later in this function
+    map->ptr[I2CCLK/4+4] = 0x90;		// Write | Start
+    for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;
+//	Check NACK
+    if (map->ptr[I2CCLK/4+4] & 0x80) {
+	printf("I2C - NACK\n");
+	return -1;
+    }
+//	Register address
+    map->ptr[I2CCLK/4+3] = addr & 0xFF;
+    map->ptr[I2CCLK/4+4] = 0x50;		// Write & Stop
+    for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;
+//	Chip address
+    map->ptr[I2CCLK/4+3] = ((addr >> 7) & 0xFE) | 1;
+    map->ptr[I2CCLK/4+4] = 0x90;		// Write | Start
+    for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;
+//	High byte
+    map->ptr[I2CCLK/4+4] = 0x20;		// Read
+    for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;
+    data = map->ptr[I2CCLK/4+3];
+//	Low byte
+    map->ptr[I2CCLK/4+4] = 0x68;		// Read | STOP | ACK
+    for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;
+    data = (data << 8) | map->ptr[I2CCLK/4+3];
+
+    return data;    
+}
+
+void I2CWrite(VMEMAP *map, int addr, int data)
+{
+    int i;
+//	Chip address
+    map->ptr[I2CCLK/4+3] = (addr >> 7) & 0xFE;	// no SWAP here and later in this function
+    map->ptr[I2CCLK/4+4] = 0x90;		// Write | Start
+    for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;
+//	Check NACK
+    if (map->ptr[I2CCLK/4+4] & 0x80) {
+	printf("I2C - NACK\n");
+	return;
+    }
+//	Register address
+    map->ptr[I2CCLK/4+3] = addr & 0xFF;
+    map->ptr[I2CCLK/4+4] = 0x10;		// Write
+    for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;
+//	Data high byte
+    map->ptr[I2CCLK/4+3] = (data >> 8) & 0xFF;
+    map->ptr[I2CCLK/4+4] = 0x10;		// Write
+    for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;
+//	Data low byte
+    map->ptr[I2CCLK/4+3] = data & 0xFF;
+    map->ptr[I2CCLK/4+4] = 0x50;		// Write & Stop
+    for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;    
+}
+
+int ICXRead(VMEMAP *map, int addr)
+{
+    int data;
+    int i;
+    
+    map->ptr[ICXSPI/4 + 1] = SWAP(1);		// crystall select
+    map->ptr[ICXSPI/4] = SWAP(0x80 | (addr >> 8));
+    for (i=0; i<ICXTMOUT; i++) if (!(0x8000 & SWAP(map->ptr[ICXSPI/4]))) break;
+    map->ptr[ICXSPI/4] = SWAP(addr & 0xFF);
+    for (i=0; i<ICXTMOUT; i++) if (!(0x8000 & SWAP(map->ptr[ICXSPI/4]))) break;
+    map->ptr[ICXSPI/4 + 1] = SWAP(0x101);	// input data
+    map->ptr[ICXSPI/4] = 0;
+    for (i=0; i<ICXTMOUT; i++) if (!(0x8000 & SWAP(map->ptr[ICXSPI/4]))) break;
+    data = SWAP(map->ptr[ICXSPI/4]);
+    map->ptr[ICXSPI/4] = 0;
+    for (i=0; i<ICXTMOUT; i++) if (!(0x8000 & SWAP(map->ptr[ICXSPI/4]))) break;
+    data = SWAP(map->ptr[ICXSPI/4]) | (data << 8);
+    map->ptr[ICXSPI/4 + 1] = 0;			
+    return data;
+}
+
+int ICXWrite(VMEMAP *map, int addr, int data)
+{
+    int i;
+    
+    map->ptr[ICXSPI/4 + 1] = SWAP(1);		// crystall select
+    map->ptr[ICXSPI/4] = SWAP((addr >> 8) & 0x7F);
+    for (i=0; i<ICXTMOUT; i++) if (!(0x8000 & SWAP(map->ptr[ICXSPI/4]))) break;
+    map->ptr[ICXSPI/4] = SWAP(addr & 0xFF);
+    for (i=0; i<ICXTMOUT; i++) if (!(0x8000 & SWAP(map->ptr[ICXSPI/4]))) break;
+    map->ptr[ICXSPI/4] = SWAP(data >> 8);
+    for (i=0; i<ICXTMOUT; i++) if (!(0x8000 & SWAP(map->ptr[ICXSPI/4]))) break;
+    map->ptr[ICXSPI/4] = SWAP(data & 0xFF);
+    for (i=0; i<ICXTMOUT; i++) if (!(0x8000 & SWAP(map->ptr[ICXSPI/4]))) break;
+    map->ptr[ICXSPI/4 + 1] = 0;
+}
+
 void Help(void)
 {
     int i;
@@ -161,15 +262,17 @@ void Help(void)
     printf("Command(s) should be enclosed in quotes and can be separated by semicolon.\n");
     printf("If no command is given - interactive mode is entered.\n");
     printf("\tCommands:\n");
-    printf("* - nothing - just a comment\n");
-    printf("H - print this help message\n");
-    printf("M [addr len] - map a region (query mapping).\n");
-    printf("P [addr [len]] - dump the region. Address is counted from mapped start.\n");
-    printf("Q|X - quit\n");
-    printf("R N [repeat] - test read/write a pair of ADC16 registers (addr/trgicnt) for module N.\n");
-    printf("T N [addr [len]] - test ADC16 memory for module N.\n");
-    printf("W [N] - wait N us, if no N - 1 ms\n");
-    printf("AAAA[=XXXX] - read address AAAA / write XXXX to AAAA\n");
+    printf("* - nothing - just a comment;\n");
+    printf("H - print this help message;\n");
+    printf("I addr[=XX] - local I2C read/write;\n");
+    printf("M [addr len] - map a region (query mapping);\n");
+    printf("P [addr [len]] - dump the region. Address is counted from mapped start. 32-bit operations only.\n");
+    printf("Q - quit;\n");
+    printf("R N [repeat] - test read/write a pair of ADC16 registers (addr/trgicnt) for module N;\n");
+    printf("T N [addr [len]] - test ADC16 memory for module N;\n");
+    printf("W [N] - wait N us, if no N - 1 ms;\n");
+    printf("X addr[=XXXX] - interXilinx SPI read/write;\n");
+    printf("AAAA[=XXXX] - read address AAAA / write XXXX to AAAA.\n");
     printf("Only the first letter of the command is decoded.\n");
     printf("ALL (!) input numbers are hexadecimal.\n");
 }
@@ -265,6 +368,30 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
     case 'H':	// help
         Help();
         break;
+    case 'I' :	// Local I2C read/write
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL) {
+	    Help();
+	    break;
+	}
+        if (map->ptr == NULL) {
+    	    printf("Map some region first.\n");
+	    break;
+	}
+	if (I2CCLK+32 > map->len) {
+	    printf("Local I2C registers (%8.8X) above the mapped length (%8.8X)\n", I2CCLK+32, map->len);
+	    break;
+	}
+	addr = strtoul(tok, NULL, 16) & 0x7FFF;
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL || strlen(tok) == 0) {	// read
+	    printf("I2C[%4.4X] = %2.2X\n", addr, I2CRead(map, addr));
+	} else {
+	    N = strtol(tok, NULL, 16) & 0xFFFF;
+	    I2CWrite(map, addr, N);
+	    printf("I2C[%4.4X] <= %2.2X\n", addr, N);
+	}
+	break;
     case 'M':	// Map address length
         tok = strtok(NULL, DELIM);
         if (tok == NULL || strlen(tok) == 0) {
@@ -296,8 +423,7 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	}
 	Dump(addr, len, map);
 	break;
-    case 'Q' :	// Quit / Exit
-    case 'X' :
+    case 'Q' :	// Quit
         return 1;
     case 'R' :	// register read/write test
 	if (map->ptr == NULL) {
@@ -340,6 +466,30 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	tok = strtok(NULL, DELIM);
 	N = (tok == NULL || strlen(tok) == 0) ? 1000 : strtol(tok, NULL, 16);
 	usleep(N);
+	break;
+    case 'X' :	// InterXilinx read/write
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL) {
+	    Help();
+	    break;
+	}
+        if (map->ptr == NULL) {
+    	    printf("Map some region first.\n");
+	    break;
+	}
+	if (ICXSPI+8 > map->len) {
+	    printf("ICX SPI registers (%8.8X) above the mapped length (%8.8X)\n", ICXSPI+8, map->len);
+	    break;
+	}
+	addr = strtoul(tok, NULL, 16) & 0x7FFF;
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL || strlen(tok) == 0) {	// read
+	    printf("ICX[%4.4X] = %4.4X\n", addr, ICXRead(map, addr));
+	} else {
+	    N = strtol(tok, NULL, 16) & 0xFFFF;
+	    ICXWrite(map, addr, N);
+	    printf("ICX[%4.4X] <= %4.4X\n", addr, N);
+	}
 	break;
     default:
 	printf("Unknown command \"%c\"\n", toupper(tok[0]));
