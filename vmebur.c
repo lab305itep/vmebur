@@ -31,6 +31,9 @@
 #define I2CTMOUT	1000	// I2C timeout counter
 #define L2CCLK		0x10	// Remote I2C port
 #define L2CTMOUT	100	// L2C operation timeout
+#define SI5338ADR	0x70	// Si5338 I2C address
+#define SITMOUT		100	// Si5338 timeout
+#define ADCSPI		0	// ADC SPI controller registers base
 
 typedef struct {
     unsigned addr;
@@ -320,6 +323,213 @@ void DACWrite(VMEMAP *map, int data)
     map->ptr[DACSPI/4 + 1] = 0;
 }
 
+void ADCWrite(VMEMAP *map, int N, int addr, int data)
+{
+    int spiregs;
+    spiregs = ((N & 0xC0) << 11) + ADCSPI;
+    ICXWrite(map, spiregs+1, 1 << (N & 3));	// frame begin
+    ICXWrite(map, spiregs, addr >> 8);
+    ICXWrite(map, spiregs, addr & 0xFF);
+    ICXWrite(map, spiregs, data & 0xFF);
+    ICXWrite(map, spiregs+1, 0);		// frame end
+}
+
+int ADCRead(VMEMAP *map, int N, int addr)
+{
+    int data;
+    int spiregs;
+    spiregs = ((N & 0xC0) << 11) + ADCSPI;
+
+    ICXWrite(map, spiregs+1, 1 << (N & 3));	// frame begin
+    ICXWrite(map, spiregs, (addr >> 8) | 0x80);
+    ICXWrite(map, spiregs, addr & 0xFF);
+    ICXWrite(map, spiregs+1, (1 << (N & 3)) + 0x100);	// switch to input data
+    ICXWrite(map, spiregs, 0);
+    ICXWrite(map, spiregs+1, 0);		// frame end
+    data = ICXRead(map, spiregs);
+    return data;
+}
+
+int SiRead(VMEMAP *map, int N, int addr)
+{
+    return L2CRead(map, (N << 16) | 0x7000 | addr);
+}
+
+void SiWrite(VMEMAP *map, int N, int addr, int data)
+{
+    L2CWrite(map, (N << 16) | 0x7000 | addr, data);
+}
+
+/*
+    Configure Si5338 using register file and algorithm from fig. 9 of manual
+*/
+void ConfSI5338(VMEMAP *map, int N, char *fname)
+{
+    const unsigned char RegMask[512] = {
+//		page 1
+//	0     1     2     3     4     5     6     7     8     9
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1D, 0x00, 0x00, 0x00,	//   0-  9
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,	//  10- 19
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0xFF, 0xFF,	//  20- 29
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0x1F, 0x1F, 0x1F,	//  30- 39
+	0xFF, 0x7F, 0x3F, 0x00, 0x00, 0xFF, 0xFF, 0x3F, 0xFF, 0xFF,	//  40- 49
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 	//  50- 59
+	0xFF, 0xFF, 0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 	//  60- 69
+	0xFF, 0xFF, 0xFF, 0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 	//  70- 79
+	0xFF, 0xFF, 0xFF, 0xFF, 0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 	//  80- 89
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x3F, 0x00, 0xFF, 0xFF, 0xFF, 	//  90- 99
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xFF, 0xFF, 	// 100-109
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 	// 110-119
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 	// 120-129
+	0x0F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 	// 130-139
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 140-149
+	0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 0x0F, 	// 150-159
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 	// 160-169
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 	// 170-179
+	0xFF, 0x0F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 	// 180-189
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 	// 190-199
+	0xFF, 0xFF, 0xFF, 0x0F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 	// 200-209
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 	// 210-219
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 220-229
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 230-239
+	0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 240-249
+	0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,                     	// 250-255
+//		page 2	
+//	0     1     2     3     4     5     6     7     8     9
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	//   0-  9
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	//  10- 19
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	//  20- 29
+	0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,	//  30- 39
+	0xFF, 0xFF, 0xFF, 0x0F, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,	//  40- 49
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F,	//  50- 59
+	0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,	//  60- 69
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 0x00, 0x00, 0x00, 0xFF,	//  70- 79
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,	//  80- 89
+	0xFF, 0x0F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	//  90- 99
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 100-109
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 110-119
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 120-129
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 130-139
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 140-149
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 150-159
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 160-169
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 170-179
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 180-189
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 190-199
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 200-209
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 210-219
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 220-229
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 230-239
+	0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 	// 240-249
+	0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,                     	// 250-255
+    };
+    unsigned char RegVal[512];
+    char str[1024];
+    char *tok;
+    FILE *conf;
+    const char DELIM[]=" \t\r:=,h";
+    int i;
+    unsigned char val;
+
+//	Read the file
+    conf = fopen(fname, "rt");
+    if (!conf) {
+	printf("SI5338 configuration file %s not found.\n", fname);
+	return;
+    }
+    memset(RegVal, 0, sizeof(RegVal));
+    for(;;) {
+	if (!fgets(str, sizeof(str), conf)) break;
+	tok = strtok(str, DELIM);
+	if (!tok || !strlen(tok)) continue;
+	if (!isdigit(tok[0])) continue;
+	i = strtol(tok, NULL, 0);
+	if (i<0 || i>511) continue;
+	tok = strtok(NULL, DELIM);
+	if (!tok || !strlen(tok)) continue;
+	RegVal[i] = strtol(tok, NULL, 16);
+    }
+    fclose(conf);
+    printf("Configuring Si5338@block=%d with %s\n", N, fname);
+//	Set OEB_ALL = 1; reg230[4]
+    SiWrite(map, N, 230, 0x1F);		// disable all
+//	Set DIS_LOL = 1; reg241[7]
+    SiWrite(map, N, 241, 0xE5);
+//	fire new configuration in
+//	page 0
+    SiWrite(map, N, 255, 0);
+    for (i=0; i<255; i++) {
+	switch(RegMask[i]) {
+	case 0:			// we should ignore this register
+	    break;
+	case 0xFF:		// we can directly write to this register
+	    SiWrite(map, N, i, RegVal[i]);
+	    break;
+	default:		// we need read-modify-write
+	    val = SiRead(map, N, i) & (~RegMask[i]);
+	    val |= RegVal[i] & RegMask[i];
+	    SiWrite(map, N, i, val);
+	    break;
+	}
+    }
+//	page 1
+    SiWrite(map, N, 255, 1);
+    for (i=0; i<255; i++) {
+	switch(RegMask[256+i]) {
+	case 0:			// we should ignore this register
+	    break;
+	case 0xFF:		// we can directly write to this register
+	    SiWrite(map, N, i, RegVal[256+i]);
+	    break;
+	default:		// we need read-modify-write
+	    val = SiRead(map, N, i) & (~RegMask[256+i]);
+	    val |= RegVal[256+i] & RegMask[256+i];
+	    SiWrite(map, N, i, val);
+	    break;
+	}
+    }
+    SiWrite(map, N, 255, 0);	// back to page 0
+//	Validate input clock
+    for (i=0; i<SITMOUT; i++) {
+	if (!(SiRead(map, N, 218) & 4)) break;
+	usleep(100);
+    }
+    if (i == SITMOUT) {
+	printf("SI5338 - can not validate input clock.\n");
+	return;
+    }
+//	Set FCAL_OVRD_EN=0; reg49[7]
+    val = SiRead(map, N, 49) & 0x7F;
+    SiWrite(map, N, 49, val);
+//	Initiate PLL lock SOFT_RESET=1; reg246[1]
+    SiWrite(map, N, 246, 2);
+    usleep(25000);
+//	restart LOL DIS_LOL=0; reg241[7]; reg241 = 0x65
+    SiWrite(map, N, 241, 0x65);
+//	Validate PLL lock
+    for (i=0; i<SITMOUT; i++) {
+	if (!(SiRead(map, N, 218)& 0x15)) break;
+	usleep(100);
+    }
+    if (i == SITMOUT) {
+	printf("SI5338 - can not lock PLL.\n");
+	return;
+    }
+//	Copy FCAL
+    val = SiRead(map, N, 237) & 3;
+    SiWrite(map, N, 47, val | 0x14);
+    val = SiRead(map, N, 236);
+    SiWrite(map, N, 46, val);
+    val = SiRead(map, N, 235);
+    SiWrite(map, N, 45, val);
+//	Set FCAL_OVRD_EN=1; reg49[7]
+    val = SiRead(map, N, 49) | 0x80;
+    SiWrite(map, N, 49, val);
+//	Enable Outputs
+//	Set OEB_ALL = 0; reg230[4]
+    SiWrite(map, N, 230, 0);		// enable all    
+}
+
 void Help(void)
 {
     int i;
@@ -336,8 +546,10 @@ void Help(void)
     printf("If no command is given - interactive mode is entered.\n");
     printf("\tCommands:\n");
     printf("* - nothing - just a comment;\n");
+    printf("G N addr[=XX] - read/write register addr @ ADC N via SPI;\n");
     printf("H - print this help message;\n");
     printf("I addr[=XX] - local I2C read/write;\n");
+    printf("K N clkregfile.txt - load SI5338 configuration file to 16-chan block N;\n");
     printf("L xil&addr[=XX] - remoute I2C read/write;\n");
     printf("M [addr len] - map a region (query mapping);\n");
     printf("P [addr [len]] - dump the region. Address is counted from mapped start. 32-bit operations only.\n");
@@ -440,6 +652,36 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	    }
 	}
 	break;
+    case 'G' :	// Remote SPI read/write
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL) {
+	    Help();
+	    break;
+	}
+	N = strtoul(tok, NULL, 16) & 0xF;
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL) {
+	    Help();
+	    break;
+	}
+        if (map->ptr == NULL) {
+    	    printf("Map some region first.\n");
+	    break;
+	}
+	if (ICXSPI+8 > map->len) {
+	    printf("ICX SPI registers (%8.8X) above the mapped length (%8.8X)\n", ICXSPI+8, map->len);
+	    break;
+	}
+	addr = strtoul(tok, NULL, 16) & 0x1FFF;
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL || strlen(tok) == 0) {	// read
+	    printf("ADC[%1.1X:%4.4X] = %2.2X\n", N, addr, ADCRead(map, N, addr));
+	} else {
+	    len = strtol(tok, NULL, 16) & 0xFF;
+	    ADCWrite(map, N, addr, len);
+	    printf("ADC[%1.1X:%4.4X] <= %2.2X\n", N, addr, len);
+	}
+	break;
     case 'H':	// help
         Help();
         break;
@@ -466,6 +708,28 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	    I2CWrite(map, addr, N);
 	    printf("I2C[%4.4X] <= %4.4X\n", addr, N);
 	}
+	break;
+    case 'K' :	// program Si5338 with a register file
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL) {
+	    Help();
+	    break;
+	}
+	addr = strtoul(tok, NULL, 16) & 3;
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL) {
+	    Help();
+	    break;
+	}
+        if (map->ptr == NULL) {
+    	    printf("Map some region first.\n");
+	    break;
+	}
+	if (ICXSPI+8 > map->len) {
+	    printf("ICX SPI registers (%8.8X) above the mapped length (%8.8X)\n", ICXSPI+8, map->len);
+	    break;
+	}
+	ConfSI5338(map, addr, tok);
 	break;
     case 'L' :	// Remote I2C read/write
 	tok = strtok(NULL, DELIM);
