@@ -29,7 +29,8 @@
 #define DACTMOUT	100	// DAC timeout counter
 #define I2CCLK		0x20000 // Local I2C (CLK control)
 #define I2CTMOUT	1000	// I2C timeout counter
-
+#define L2CCLK		0x10	// Remote I2C port
+#define L2CTMOUT	100	// L2C operation timeout
 
 typedef struct {
     unsigned addr;
@@ -249,6 +250,72 @@ void ICXWrite(VMEMAP *map, int addr, int data)
     map->ptr[ICXSPI/4 + 1] = 0;
 }
 
+int L2CRead(VMEMAP *map, int addr)
+{
+    int i, data;
+    int l2cregs, chipadr, regadr;
+    l2cregs = ((addr & 0x30000) >> 3) + L2CCLK;
+    chipadr = (addr >> 7) & 0xFE;
+    regadr = addr & 0xFF;
+//	Chip address
+    ICXWrite(map, l2cregs + 3, chipadr << 8);
+    ICXWrite(map, l2cregs + 4, 0x9000);		// Write & Start
+    for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
+//	Check NACK
+    if (ICXRead(map, l2cregs + 4) & 0x8000) {
+	printf("I2C - NACK\n");
+	return -1;
+    }
+//	Register address
+    ICXWrite(map, l2cregs + 3, regadr << 8);
+    ICXWrite(map, l2cregs + 4, 0x5000);		// Write | Stop
+    for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
+//	Chip address
+    ICXWrite(map, l2cregs + 3, (chipadr | 1) << 8);
+    ICXWrite(map, l2cregs + 4, 0x9000);		// Write | Start
+    for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
+//	High byte
+    ICXWrite(map, l2cregs + 4, 0x9000);		// Read
+    for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
+    data = ICXRead(map, l2cregs + 3);
+//	Low byte
+    ICXWrite(map, l2cregs + 4, 0x6800);		// Read | STOP | ACK
+    for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
+    data = (data << 8) + ICXRead(map, l2cregs + 3);
+
+    return data;    
+}
+
+void L2CWrite(VMEMAP *map, int addr, int data)
+{
+    int i;
+    int l2cregs, chipadr, regadr;
+    l2cregs = ((addr & 0x30000) >> 3) + L2CCLK;
+    chipadr = (addr >> 7) & 0xFE;
+    regadr = addr & 0xFF;
+//	Chip address
+    ICXWrite(map, l2cregs + 3, chipadr << 8);
+    ICXWrite(map, l2cregs + 4, 0x9000);		// Write | Start
+    for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
+//	Check NACK
+    if (ICXRead(map, l2cregs + 4) & 0x8000) {
+	printf("I2C - NACK\n");
+	return;
+    }
+//	Register address
+    ICXWrite(map, l2cregs + 3, regadr << 8);
+    ICXWrite(map, l2cregs + 4, 0x1000);		// Write
+    for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
+//	Data high byte
+    ICXWrite(map, l2cregs + 3, data & 0xFF00);
+    ICXWrite(map, l2cregs + 4, 0x1000);		// Write
+    for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
+//	Data low byte
+    ICXWrite(map, l2cregs + 3, (data & 0xFF) << 8);
+    ICXWrite(map, l2cregs + 4, 0x5000);		// Write | STOP
+    for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
+}
+
 void DACWrite(VMEMAP *map, int data)
 {
     int i;
@@ -279,6 +346,7 @@ void Help(void)
     printf("* - nothing - just a comment;\n");
     printf("H - print this help message;\n");
     printf("I addr[=XX] - local I2C read/write;\n");
+    printf("L xil&addr[=XX] - remoute I2C read/write;\n");
     printf("M [addr len] - map a region (query mapping);\n");
     printf("P [addr [len]] - dump the region. Address is counted from mapped start. 32-bit operations only.\n");
     printf("Q - quit;\n");
@@ -400,11 +468,35 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	addr = strtoul(tok, NULL, 16) & 0x7FFF;
 	tok = strtok(NULL, DELIM);
 	if (tok == NULL || strlen(tok) == 0) {	// read
-	    printf("I2C[%4.4X] = %2.2X\n", addr, I2CRead(map, addr));
+	    printf("I2C[%4.4X] = %4.4X\n", addr, I2CRead(map, addr));
 	} else {
 	    N = strtol(tok, NULL, 16) & 0xFFFF;
 	    I2CWrite(map, addr, N);
-	    printf("I2C[%4.4X] <= %2.2X\n", addr, N);
+	    printf("I2C[%4.4X] <= %4.4X\n", addr, N);
+	}
+	break;
+    case 'L' :	// Remote I2C read/write
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL) {
+	    Help();
+	    break;
+	}
+        if (map->ptr == NULL) {
+    	    printf("Map some region first.\n");
+	    break;
+	}
+	if (ICXSPI+8 > map->len) {
+	    printf("ICX SPI registers (%8.8X) above the mapped length (%8.8X)\n", ICXSPI+8, map->len);
+	    break;
+	}
+	addr = strtoul(tok, NULL, 16) & 0x37FFF;
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL || strlen(tok) == 0) {	// read
+	    printf("L2C[%5.5X] = %2.2X\n", addr, L2CRead(map, addr));
+	} else {
+	    N = strtol(tok, NULL, 16) & 0xFF;
+	    L2CWrite(map, addr, N);
+	    printf("L2C[%5.5X] <= %2.2X\n", addr, N);
 	}
 	break;
     case 'M':	// Map address length
