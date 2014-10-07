@@ -159,7 +159,7 @@ int I2CRead(VMEMAP *map, int addr)
 {
     int i, data;
 //	Chip address
-    map->ptr[I2CCLK/4+3] = (addr >> 7) & 0xFE;	// no SWAP here and later in this function
+    map->ptr[I2CCLK/4+3] = (addr >> 8) & 0xFE;	// no SWAP here and later in this function
     map->ptr[I2CCLK/4+4] = 0x90;		// Write | Start
     for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;
 //	Check NACK
@@ -172,7 +172,7 @@ int I2CRead(VMEMAP *map, int addr)
     map->ptr[I2CCLK/4+4] = 0x50;		// Write & Stop
     for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;
 //	Chip address
-    map->ptr[I2CCLK/4+3] = ((addr >> 7) & 0xFE) | 1;
+    map->ptr[I2CCLK/4+3] = ((addr >> 8) & 0xFE) | 1;
     map->ptr[I2CCLK/4+4] = 0x90;		// Write | Start
     for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;
 //	High byte
@@ -191,7 +191,7 @@ void I2CWrite(VMEMAP *map, int addr, int data)
 {
     int i;
 //	Chip address
-    map->ptr[I2CCLK/4+3] = (addr >> 7) & 0xFE;	// no SWAP here and later in this function
+    map->ptr[I2CCLK/4+3] = (addr >> 8) & 0xFE;	// no SWAP here and later in this function
     map->ptr[I2CCLK/4+4] = 0x90;		// Write | Start
     for (i=0; i < I2CTMOUT; i++) if (!(map->ptr[I2CCLK/4+4] & 2)) break;
 //	Check NACK
@@ -274,14 +274,10 @@ int L2CRead(VMEMAP *map, int addr)
     ICXWrite(map, l2cregs + 3, (chipadr | 1) << 8);
     ICXWrite(map, l2cregs + 4, 0x9000);		// Write | Start
     for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
-//	High byte
-    ICXWrite(map, l2cregs + 4, 0x9000);		// Read
-    for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
-    data = ICXRead(map, l2cregs + 3);
-//	Low byte
+//	Data byte
     ICXWrite(map, l2cregs + 4, 0x6800);		// Read | STOP | ACK
     for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
-    data = (data << 8) + ICXRead(map, l2cregs + 3);
+    data = (ICXRead(map, l2cregs + 3) >> 8) & 0xFF;
 
     return data;    
 }
@@ -306,11 +302,7 @@ void L2CWrite(VMEMAP *map, int addr, int data)
     ICXWrite(map, l2cregs + 3, regadr << 8);
     ICXWrite(map, l2cregs + 4, 0x1000);		// Write
     for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
-//	Data high byte
-    ICXWrite(map, l2cregs + 3, data & 0xFF00);
-    ICXWrite(map, l2cregs + 4, 0x1000);		// Write
-    for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
-//	Data low byte
+//	Data byte
     ICXWrite(map, l2cregs + 3, (data & 0xFF) << 8);
     ICXWrite(map, l2cregs + 4, 0x5000);		// Write | STOP
     for (i=0; i < I2CTMOUT; i++) if (!(ICXRead(map, l2cregs + 4) & 0x200)) break;
