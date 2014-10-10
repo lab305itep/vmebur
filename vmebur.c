@@ -326,7 +326,7 @@ void DACWrite(VMEMAP *map, int data)
 void ADCWrite(VMEMAP *map, int N, int addr, int data)
 {
     int spiregs;
-    spiregs = ((N & 0xC0) << 11) + ADCSPI;
+    spiregs = ((N & 0xC) << 11) + ADCSPI;
     ICXWrite(map, spiregs+1, 1 << (N & 3));	// frame begin
     ICXWrite(map, spiregs, addr >> 8);
     ICXWrite(map, spiregs, addr & 0xFF);
@@ -338,7 +338,7 @@ int ADCRead(VMEMAP *map, int N, int addr)
 {
     int data;
     int spiregs;
-    spiregs = ((N & 0xC0) << 11) + ADCSPI;
+    spiregs = ((N & 0xC) << 11) + ADCSPI;
 
     ICXWrite(map, spiregs+1, 1 << (N & 3));	// frame begin
     ICXWrite(map, spiregs, (addr >> 8) | 0x80);
