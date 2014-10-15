@@ -12,6 +12,8 @@ if [ $? == 0 ] ; then
     ./progcsr.sh
     sleep 1
     ./clockenb.sh
+    sleep 1
+    ./resetadc.sh
 else
     ../cpldtool/cpldtool 1 p
 fi
