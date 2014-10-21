@@ -92,6 +92,28 @@ void Dump(unsigned addr, unsigned len, VMEMAP *map)
     if ((i%8) != 0) printf("\n");
 }
 
+void GnuPlot(unsigned addr, unsigned len, VMEMAP *map)
+{
+    unsigned i;
+    unsigned d;
+    int d1, d2;
+    if (addr + 4 > map->len) {
+	printf("Nothing to dump - start address (%8.8X) is above the mapped length (%8.8X)\n",
+	    addr, map->len);
+	return;
+    }
+    if (addr + len > map->len) len = map->len - addr;
+    for (i = 0; i < len/4; i++) {
+	d = SWAP(map->ptr[addr/4+i]);
+	d1 = d & 0xFFF;
+	if (d1 & 0x800) d1 |= 0xFFFFF000;
+	d2 = (d >> 16) & 0xFFF;
+	if (d2 & 0x800) d2 |= 0xFFFFF000;
+	printf("%d %d\n%d %d\n", 2*i, d1, 2*i+1, d2);
+    }
+    if ((i%8) != 0) printf("\n");
+}
+
 void RegTest(int N, unsigned repeat, VMEMAP *map)
 {
     int i;
@@ -549,6 +571,7 @@ void Help(void)
     printf("G N addr[=XX] - read/write register addr @ ADC N via SPI;\n");
     printf("H - print this help message;\n");
     printf("I addr[=XX] - local I2C read/write;\n");
+    printf("J [addr [len]] - dump data for gnuplot;\n");
     printf("K N clkregfile.txt - load SI5338 configuration file to 16-chan block N;\n");
     printf("L xil&addr[=XX] - remoute I2C read/write;\n");
     printf("M [addr len] - map a region (query mapping);\n");
@@ -578,7 +601,7 @@ int Map(unsigned addr, unsigned len, VMEMAP *map, int fd)
     } else {
 	map->addr = addr;
 	map->len = len;
-	printf("VME region [%8.8X-%8.8X] successfully mapped at %8.8X\n",
+	printf("# VME region [%8.8X-%8.8X] successfully mapped at %8.8X\n",
 	    addr, addr + len - 1, map->ptr);
     }
     return rc;
@@ -709,6 +732,21 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	    printf("I2C[%4.4X] <= %4.4X\n", addr, N);
 	}
 	break;
+    case 'J':	// Dump [address [length]] for gnuplot
+        if (map->ptr == NULL) {
+	    printf("Map some region first.\n");
+	    break;
+	}
+	addr = 0;
+	len = 0x200;
+	tok = strtok(NULL, DELIM);
+	if (tok != NULL && strlen(tok) != 0) {
+	    addr = strtoul(tok, NULL, 16);
+	    tok = strtok(NULL, DELIM);
+	    if (tok != NULL && strlen(tok) != 0) len = strtoul(tok, NULL, 16);
+	}
+	GnuPlot(addr, len, map);
+	break;
     case 'K' :	// program Si5338 with a register file
 	tok = strtok(NULL, DELIM);
 	if (tok == NULL) {
@@ -777,7 +815,7 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	    break;
 	}
 	addr = 0;
-	len = map->len;
+	len = 0x200;
 	tok = strtok(NULL, DELIM);
 	if (tok != NULL && strlen(tok) != 0) {
 	    addr = strtoul(tok, NULL, 16);

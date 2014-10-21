@@ -10,7 +10,6 @@ if [ $? == 0 ] ; then
     echo Sleeping...
     sleep 1
     ./progcsr.sh
-    sleep 1
     ./clockenb.sh
     sleep 1
     ./resetadc.sh
