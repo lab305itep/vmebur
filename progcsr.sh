@@ -4,7 +4,7 @@
 ./vmebur -s26 -q "m 80000 80000;7ff6c=24;7fff8=10"
 ./vmebur -s26 -q "m 80000 80000;p 0 100;p 7ff00 100"
 #	Reset WB @ channel FPGAs
-./vmebur -q "m 0 2000000;10004=100;10004=0"
+./vmebur -q "m 0 2000000;10004=80000000;10004=0"
 sleep 1
 #	setup I2C clock
 ./vmebur -q "m 0 2000000;20000=C0000000;20004=0;20008=80000000"

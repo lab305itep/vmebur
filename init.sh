@@ -13,6 +13,7 @@ if [ $? == 0 ] ; then
     ./clockenb.sh
     sleep 1
     ./resetadc.sh
+    ./settrig.sh
 else
     ../cpldtool/cpldtool 1 p
 fi
