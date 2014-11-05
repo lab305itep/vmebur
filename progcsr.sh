@@ -1,8 +1,8 @@
 #	Set CSR address and release reset
-./vmebur -s0 -ms "m A000 2000;18=81"
+#./vmebur -s0 -ms "m A000 2000;18=0;18=82"
 #	Setup CSR space
-./vmebur -s26 -q "m 80000 80000;7ff6c=24;7fff8=10"
-./vmebur -s26 -q "m 80000 80000;p 0 100;p 7ff00 100"
+./vmebur -s26 -q "m 100000 80000;7ff6c=24;7fff8=10"
+./vmebur -s26 -q "m 100000 80000;p 0 100;p 7ff00 100"
 #	Reset WB @ channel FPGAs
 ./vmebur -q "m 0 2000000;10004=80000000;10004=0"
 sleep 1
