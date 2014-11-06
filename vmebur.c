@@ -1007,7 +1007,12 @@ int main(int argc, char **argv)
 	for(;;) {
 	    if (cmd) free(cmd);
 	    cmd = readline("VmeBur (H-help)>");
-	    if (cmd == NULL || strlen(cmd) == 0) continue;
+	    if (cmd == NULL)
+            {
+                printf("\n");
+                break;
+            }
+	    if (strlen(cmd) == 0) continue;
 	    add_history(cmd);
 	    if (Process(cmd, fd, &map, mode)) break;
 	    rc = VME4L_BusErrorGet(fd, &spcr, &vmeaddr, 1 );
