@@ -35,6 +35,8 @@
 #define SITMOUT		100	// Si5338 timeout
 #define ADCSPI		0	// ADC SPI controller registers base
 
+int quiet = 0;
+
 typedef struct {
     unsigned addr;
     unsigned len;
@@ -472,7 +474,7 @@ void ConfSI5338(VMEMAP *map, int N, char *fname)
 	RegVal[i] = strtol(tok, NULL, 16);
     }
     fclose(conf);
-    printf("Configuring Si5338@block=%d with %s\n", N, fname);
+    if (!quiet) printf("Configuring Si5338@block=%d with %s\n", N, fname);
 //	Set OEB_ALL = 1; reg230[4]
     SiWrite(map, N, 230, 0x1F);		// disable all
 //	Set DIS_LOL = 1; reg241[7]
@@ -493,6 +495,10 @@ void ConfSI5338(VMEMAP *map, int N, char *fname)
 	    SiWrite(map, N, i, val);
 	    break;
 	}
+	val = SiRead(map, N, i) & RegMask[i];
+	if (val != (RegVal[i] & RegMask[i])) {
+	    printf("Register 0:%d write=%2.2X read=%2.2X mask=%2.2X\n", i, val, RegVal[i], RegMask[i]);
+	}
     }
 //	page 1
     SiWrite(map, N, 255, 1);
@@ -508,6 +514,10 @@ void ConfSI5338(VMEMAP *map, int N, char *fname)
 	    val |= RegVal[256+i] & RegMask[256+i];
 	    SiWrite(map, N, i, val);
 	    break;
+	}
+	val = SiRead(map, N, i) & RegMask[i+256];
+	if (val != (RegVal[i+256] & RegMask[i+256])) {
+	    printf("Register 1:%d write=%2.2X read=%2.2X mask=%2.2X\n", i, val, RegVal[i+256], RegMask[i+256]);
 	}
     }
     SiWrite(map, N, 255, 0);	// back to page 0
@@ -601,7 +611,7 @@ int Map(unsigned addr, unsigned len, VMEMAP *map, int fd)
     } else {
 	map->addr = addr;
 	map->len = len;
-	printf("# VME region [%8.8X-%8.8X] successfully mapped at %8.8X\n",
+	if (!quiet) printf("# VME region [%8.8X-%8.8X] successfully mapped at %8.8X\n",
 	    addr, addr + len - 1, map->ptr);
     }
     return rc;
@@ -662,15 +672,15 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	    switch (mode) {
 	    case 'L':
 	        map->ptr[addr/4] = SWAP(len);
-	        printf("VME[%8.8X + %8.8X] <= %8.8X\n", map->addr, addr, len);
+	        if (!quiet) printf("VME[%8.8X + %8.8X] <= %8.8X\n", map->addr, addr, len);
 	        break;
 	    case 'S':
 	        ((unsigned short *)map->ptr)[addr/2] = SWAP2(len) & 0xFFFF;
-	        printf("VME[%8.8X + %8.8X] <= %4.4X\n", map->addr, addr, len);
+	        if (!quiet) printf("VME[%8.8X + %8.8X] <= %4.4X\n", map->addr, addr, len);
 	        break;
 	    case 'C':
 	        ((unsigned char *)map->ptr)[addr] = len & 0xFF;
-	        printf("VME[%8.8X + %8.8X] <= %2.2X\n", map->addr, addr, len);
+	        if (!quiet) printf("VME[%8.8X + %8.8X] <= %2.2X\n", map->addr, addr, len);
 	        break;
 	    }
 	}
@@ -702,7 +712,7 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	} else {
 	    len = strtol(tok, NULL, 16) & 0xFF;
 	    ADCWrite(map, N, addr, len);
-	    printf("ADC[%1.1X:%4.4X] <= %2.2X\n", N, addr, len);
+	    if (!quiet) printf("ADC[%1.1X:%4.4X] <= %2.2X\n", N, addr, len);
 	}
 	break;
     case 'H':	// help
@@ -729,7 +739,7 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	} else {
 	    N = strtol(tok, NULL, 16) & 0xFFFF;
 	    I2CWrite(map, addr, N);
-	    printf("I2C[%4.4X] <= %4.4X\n", addr, N);
+	    if (!quiet) printf("I2C[%4.4X] <= %4.4X\n", addr, N);
 	}
 	break;
     case 'J':	// Dump [address [length]] for gnuplot
@@ -790,7 +800,7 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	} else {
 	    N = strtol(tok, NULL, 16) & 0xFF;
 	    L2CWrite(map, addr, N);
-	    printf("L2C[%5.5X] <= %2.2X\n", addr, N);
+	    if (!quiet) printf("L2C[%5.5X] <= %2.2X\n", addr, N);
 	}
 	break;
     case 'M':	// Map address length
@@ -858,7 +868,7 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	}
 	N = strtoul(tok, NULL, 16) & 0xFFFF;
 	DACWrite(map, N);
-	printf("DAC <= %4.4X\n", N);
+	if (!quiet) printf("DAC <= %4.4X\n", N);
 	break;
     case 'T' :	// test memory
         if (map->ptr == NULL) {
@@ -907,7 +917,7 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	} else {
 	    N = strtol(tok, NULL, 16) & 0xFFFF;
 	    ICXWrite(map, addr, N);
-	    printf("ICX[%4.4X] <= %4.4X\n", addr, N);
+	    if (!quiet) printf("ICX[%4.4X] <= %4.4X\n", addr, N);
 	}
 	break;
     default:
@@ -929,7 +939,6 @@ int main(int argc, char **argv)
     VME4L_SPACE spc, spcr;
     vmeaddr_t vmeaddr;
     int i, j;
-    int quiet = 0;
     
     spc = VME4L_SPC_A32_D32;
     mode = 'L';

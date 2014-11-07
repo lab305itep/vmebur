@@ -31,10 +31,10 @@ C ) reg14=0; reg0D=C;;
 esac
 
 case $2 in
-0 | 1 | 2 | 3 ) csr=3;    err=4;;
-4 | 5 | 6 | 7 ) csr=2003; err=204;;
-8 | 9 | A | B ) csr=4003; err=404;;
-C | D | E | F ) csr=6003; err=604;;
+0 | 1 | 2 | 3 ) csr=3;    err=0;;
+4 | 5 | 6 | 7 ) csr=2003; err=20;;
+8 | 9 | A | B ) csr=4003; err=40;;
+C | D | E | F ) csr=6003; err=60;;
 esac
 
 if [ $2"x" == "x" ] ; then
@@ -57,9 +57,12 @@ for (( i=0; $i<256; i=$i+1 )) ; do
 # print result
     echo "=============== $i ======================"
     case $2 in
-    0 | 4 | 8 | C ) ./vmebur -q "m 0 2000000;x ${err}0;x ${err}1;x ${err}2;x ${err}3";;
-    1 | 5 | 9 | D ) ./vmebur -q "m 0 2000000;x ${err}4;x ${err}5;x ${err}6;x ${err}7";;
-    2 | 6 | A | E ) ./vmebur -q "m 0 2000000;x ${err}8;x ${err}9;x ${err}A;x ${err}B";;
-    3 | 7 | B | F ) ./vmebur -q "m 0 2000000;x ${err}C;x ${err}D;x ${err}E;x ${err}F";;
+    0 | 4 | 8 | C ) ./vmebur -q "m 0 2000000;x ${err}18;x ${err}40;x ${err}41;x ${err}42;x ${err}43";;
+    1 | 5 | 9 | D ) ./vmebur -q "m 0 2000000;x ${err}19;x ${err}44;x ${err}45;x ${err}46;x ${err}47";;
+    2 | 6 | A | E ) ./vmebur -q "m 0 2000000;x ${err}1A;x ${err}48;x ${err}49;x ${err}4A;x ${err}4B";;
+    3 | 7 | B | F ) ./vmebur -q "m 0 2000000;x ${err}1B;x ${err}4C;x ${err}4D;x ${err}4E;x ${err}4F";;
     esac
 done
+
+# reset IODELAY
+./vmebur -q "m 0 2000000;x $csr=40$1;w 1;x $csr=20$1;x $csr=$1" >> /dev/null

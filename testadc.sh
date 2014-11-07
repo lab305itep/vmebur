@@ -27,11 +27,12 @@ for i in 0 1 2 3 4 5 6 7 8 9 A B C D E F ; do
 done
 
 for i in 3 2003 4003 6003 ; do
-    ./vmebur -q "m 0 2000000;x $i=40$1;w 1;x $i=20$1;x $i=$1;x $i=8$1;x $i=$1" >> /dev/null
+    ./vmebur -q "m 0 2000000;x $i=40$1;w 1;x $i=20$1;x $i=$1;x $i=C$1;x $i=$1" >> /dev/null
 done
 
+sleep 1
 ./vmebur -q "m 0 2000000;x 2;x 2002;x 4002;x 6002"
 
-for i in 4 204 404 604 ; do
-    ./vmebur -q "m 0 2000000;x ${i}0;x ${i}1;x ${i}2;x ${i}3;x ${i}4;x ${i}8;x ${i}C"
+for i in 0 20 40 60 ; do
+    ./vmebur -q "m 0 2000000;x ${i}18;x ${i}19;x ${i}1A;x ${i}1B;x ${i}40;x ${i}41;x ${i}42;x ${i}43;x ${i}44;x ${i}48;x ${i}4C"
 done
