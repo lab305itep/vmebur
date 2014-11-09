@@ -41,8 +41,8 @@ esac
 for i in 0 1 2 3 4 5 6 7 8 9 A B ; do
     echo "================ $i ================="
     ./vmebur -q "m 0 2000000;g $2 16=$i"
-    ./vmebur -q "m 0 2000000;w 100000;x ${rbase}03=30$1;x ${rbase}03=10$1;x ${rbase}03=$1;w 10000;x ${rbase}03=A$1;x ${rbase}03=0$1"
-    ./vmebur -q "m 0 2000000;w 10000;x ${rbase}02"
+    ./vmebur -q "m 0 2000000;w 1000;x ${rbase}03=30$1;x ${rbase}03=10$1;x ${rbase}03=$1;w 1000;x ${rbase}03=C$1;x ${rbase}03=4$1"
+    ./vmebur -q "m 0 2000000;w 200000;x ${rbase}02"
 
     case $2 in
     0 | 4 | 8 | c | C ) ./vmebur -q "m 0 2000000;x ${rbase}18;x ${rbase}40;x ${rbase}41;x ${rbase}42;x ${rbase}43";;
@@ -51,3 +51,5 @@ for i in 0 1 2 3 4 5 6 7 8 9 A B ; do
     3 | 7 | b | B | f | F ) ./vmebur -q "m 0 2000000;x ${rbase}1B;x ${rbase}4C;x ${rbase}4D;x ${rbase}4E;x ${rbase}4F";;
     esac
 done
+
+./vmebur -q "m 0 2000000;g $2 14=0;g $2 D=0;g $2 16=3;x ${rbase}03=30F;x ${rbase}03=10F;x ${rbase}03=F;" >> /dev/null

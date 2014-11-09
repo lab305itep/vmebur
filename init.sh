@@ -6,13 +6,8 @@ if [ $? == 0 ] ; then
     sleep 1
     echo Sleeping...
     sleep 1
-    echo Sleeping...
-    sleep 1
-    echo Sleeping...
-    sleep 1
     ./progcsr.sh
     ./clockenb.sh
-    sleep 1
     ./resetadc.sh
     ./settrig.sh
 else

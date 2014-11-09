@@ -562,6 +562,48 @@ void ConfSI5338(VMEMAP *map, int N, char *fname)
     SiWrite(map, N, 230, 0);		// enable all    
 }
 
+void GetEvents(VMEMAP *map, int addr, int N, char * tok)
+{
+    const struct {
+	unsigned filled;
+	unsigned data;
+    } fifo[4] = {{0x10040, 0x40000}, {0x10050, 0x60000}, {0x10060, 0x80000}, {0x10070, 0xA0000}};
+    FILE *f;
+    unsigned int L, LL;
+    unsigned int len;
+    int i;
+    volatile unsigned int *regfilled;
+    volatile unsigned int *regfifo;
+    unsigned int buf[0x2000];
+    
+    f = fopen(((tok && strlen(tok) > 0) ? tok : "fifo.dat"), "wb");
+    if (!f) {
+	printf("Can not open file %s for writing.\n", tok);
+	return;
+    }
+    
+    regfilled = &(map->ptr[fifo[addr].filled/4]);
+    regfifo = &(map->ptr[fifo[addr].data/4]);
+    
+    *regfifo = 0;		// reset FIFO
+    
+    for (L = 0; L < N; L += len) {
+	len = SWAP(*regfilled);
+	if (len & 0x80000000) {		// overflow
+	    printf("Fifo overflow\n");
+	    *regfifo = 0;
+	    len = 0;
+	    continue;
+	}
+	if (!len) continue;
+	if (len > sizeof(buf) / sizeof(int)) len = sizeof(buf) / sizeof(int);
+	for (i=0; i<len; i++) buf[i] = SWAP(*regfifo);
+	fwrite(buf, sizeof(int), len, f);
+    }
+
+    fclose(f);
+}
+
 void Help(void)
 {
     int i;
@@ -585,6 +627,7 @@ void Help(void)
     printf("K N clkregfile.txt - load SI5338 configuration file to 16-chan block N;\n");
     printf("L xil&addr[=XX] - remoute I2C read/write;\n");
     printf("M [addr len] - map a region (query mapping);\n");
+    printf("N xil num [file.dat] - get num 32 bit words from FIFO for xil to file;\n");
     printf("P [addr [len]] - dump the region. Address is counted from mapped start. 32-bit operations only.\n");
     printf("Q - quit;\n");
     printf("R N [repeat] - test read/write a pair of ADC16 registers (addr/trgicnt) for module N;\n");
@@ -819,6 +862,30 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	len = strtoul(tok, NULL, 16);
 	Map(addr, len, map, fd);
 	break;
+    case 'N':
+        if (map->ptr == NULL) {
+    	    printf("Map some region first.\n");
+	    break;
+	}
+	if (map->len < 0xC0000) {
+	    printf("Mapped length (%8.8X) too small. We need 0xC0000 at least\n",map->len);
+	    break;
+	}
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL) {
+	    Help();
+	    break;
+	}
+	addr = strtoul(tok, NULL, 16) & 3;
+	tok = strtok(NULL, DELIM);
+	if (tok == NULL) {
+	    Help();
+	    break;
+	}
+	N = strtoul(tok, NULL, 16);
+	tok = strtok(NULL, DELIM);
+	GetEvents(map, addr, N, tok);
+	break;	
     case 'P':	// Print [address [length]]
         if (map->ptr == NULL) {
 	    printf("Map some region first.\n");
