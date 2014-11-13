@@ -7,6 +7,7 @@ if [ $? == 0 ] ; then
     echo Sleeping...
     sleep 1
     ./progcsr.sh
+    ./pwdadc.sh
     ./clockenb.sh
     ./resetadc.sh
     ./settrig.sh
