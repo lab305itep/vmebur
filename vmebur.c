@@ -1,27 +1,20 @@
 /*
     SvirLex 2012 - bur for VME with TSI148 chipset
-    Using MEN drivers
+    Using vme_user drivers
 */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <MEN/vme4l.h>
-#include <MEN/vme4l_api.h>
+#include <fcntl.h>
+#include <sys/mman.h>
 #include <readline/readline.h>
 
-#ifndef SWAP_MODE
-#define SWAP_MODE VME4L_NO_SWAP
-#endif
+#include "vme_user.h"
 
-#if (SWAP_MODE == VME4L_NO_SWAP)
 #define SWAP(A) __swap(A)
 #define SWAP2(A) __swap2(A)
-#else
-#define SWAP(A) (A)
-#define SWAP2(A) (A)
-#endif
 
 #define ICXSPI		0x10010	// ICX SPI base address
 #define ICXTMOUT	100	// ICX timeout counter
@@ -41,6 +34,7 @@ typedef struct {
     unsigned addr;
     unsigned len;
     unsigned *ptr;
+    void *mmap_ptr;
 } VMEMAP;
 
 void usleep(int num)
@@ -611,11 +605,9 @@ void Help(void)
     printf("Command line: vmebur [options] [\"command(s)\"]\n");
     printf("\tOptions:\n");
     printf("-h - print this message\n");
-    printf("-m{L|S|C} - data size: Long, Short, Char\n");
+    printf("-s{A16|A24|A32|A64|CRCSR} - address space\n");
+    printf("-w{D8|D16|D32|D64} - data size\n");
     printf("-q - quiet start\n");
-    printf("-sNN - use space NN. Spaces:\n");
-    for (i=0; i<30; i++) printf("%2.2d - %s%c", i, VME4L_SpaceName(i), ((i%5)==4) ? '\n' : '\t');
-    printf("master6 is now mapped to A16D16 and master7 to CSR space.\n");
     printf("Command(s) should be enclosed in quotes and can be separated by semicolon.\n");
     printf("If no command is given - interactive mode is entered.\n");
     printf("\tCommands:\n");
@@ -640,27 +632,72 @@ void Help(void)
     printf("ALL (!) input numbers are hexadecimal.\n");
 }
 
-int Map(unsigned addr, unsigned len, VMEMAP *map, int fd)
+unsigned long long GetMaxAddr(unsigned aspace)
+{
+    switch(aspace)
+    {
+        case VME_A16: return VME_A16_MAX;
+	case VME_A24: return VME_A24_MAX;
+	case VME_A32: return VME_A32_MAX;
+//	case VME_A64: return VME_A64_MAX;
+	case VME_CRCSR: return VME_CRCSR_MAX;
+	default: return -1;
+    }
+}
+
+int Map(unsigned addr, unsigned len, VMEMAP *map, int fd, struct vme_master *master)
 {
     int rc;
-    if (map->ptr != NULL) VME4L_UnMap(fd, map->ptr, map->len);
-    rc = VME4L_Map(fd, addr, len, (void **)&map->ptr);
+    unsigned offset;
+    if (map->mmap_ptr != NULL) munmap(map->mmap_ptr, map->len);
+
+    offset = (addr & 0xFFFF);
+    // We first adjust the window
+    master->vme_addr = addr - offset;
+    master->size = len + offset;
+    // Workaround for "Invalid PCI bound alignment"
+    if (master->size & 0xFFFF)
+    {
+	printf("Fix master size from 0x%llx ", master->size);
+        master->size += 0x10000 - (master->size & 0xFFFF);
+	printf("to 0x%llx\n", master->size);
+    }
+
+    if (master->vme_addr + master->size > GetMaxAddr(master->aspace))
+    {
+        master->size = GetMaxAddr(master->aspace) - master->vme_addr;
+    }
+
+    rc = ioctl(fd, VME_SET_MASTER, master);
     if (rc != 0) {
+	printf("vme_addr = 0x%llx\n", master->vme_addr);
+	printf("size = 0x%llx\n", master->size);
+        perror("W125C: FATAL - can not setup VME window");
+        return rc;
+    }
+
+    // Now VME addr 'addr' will be at 0 offset for this fd.
+    map->mmap_ptr = mmap(NULL, master->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (map->mmap_ptr == MAP_FAILED)
+    {
 	map->addr = 0;
 	map->len = 0;
 	map->ptr = NULL;
+	map->mmap_ptr = NULL;
 	printf("Mapping region [%8.8X-%8.8X] failed with error %m\n",
 	    addr, addr + len - 1);
     } else {
 	map->addr = addr;
 	map->len = len;
-	if (!quiet) printf("# VME region [%8.8X-%8.8X] successfully mapped at %8.8X\n",
+        map->ptr = (unsigned*)((char*)map->mmap_ptr + offset);
+	if (!quiet) printf("# VME region [%8.8X-%8.8X] successfully mapped at %p\n",
 	    addr, addr + len - 1, map->ptr);
+        return 0;
     }
-    return rc;
+    return 1;
 }
 
-int Process(char *cmd, int fd, VMEMAP *map, char mode)
+int Process(char *cmd, int fd, VMEMAP *map, struct vme_master *master)
 {
     const char DELIM[] = " \t\n\r:=";
     char *tok;
@@ -699,29 +736,29 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	}
 	tok = strtok(NULL, DELIM);
 	if (tok == NULL || strlen(tok) == 0) {	// read
-	    switch (mode) {
-	    case 'L':
+	    switch (master->dwidth) {
+	    case VME_D32:
 	        printf("VME[%8.8X + %8.8X] = %8.8X\n", map->addr, addr, SWAP(map->ptr[addr/4]));
 	        break;
-	    case 'S':
+	    case VME_D16:
 	        printf("VME[%8.8X + %8.8X] = %4.4hX\n", map->addr, addr, SWAP2(((unsigned short *)map->ptr)[addr/2]) & 0xFFFF);
 	        break;
-	    case 'C':
+	    case VME_D8:
 	        printf("VME[%8.8X + %8.8X] = %2.2hhX\n", map->addr, addr, ((unsigned char *)map->ptr)[addr] & 0xFF);
 	        break;
 	    }
 	} else {					// write
 	    len = strtoul(tok, NULL, 16);
-	    switch (mode) {
-	    case 'L':
+	    switch (master->dwidth) {
+	    case VME_D32:
 	        map->ptr[addr/4] = SWAP(len);
 	        if (!quiet) printf("VME[%8.8X + %8.8X] <= %8.8X\n", map->addr, addr, len);
 	        break;
-	    case 'S':
+	    case VME_D16:
 	        ((unsigned short *)map->ptr)[addr/2] = SWAP2(len) & 0xFFFF;
 	        if (!quiet) printf("VME[%8.8X + %8.8X] <= %4.4X\n", map->addr, addr, len);
 	        break;
-	    case 'C':
+	    case VME_D8:
 	        ((unsigned char *)map->ptr)[addr] = len & 0xFF;
 	        if (!quiet) printf("VME[%8.8X + %8.8X] <= %2.2X\n", map->addr, addr, len);
 	        break;
@@ -849,7 +886,7 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
     case 'M':	// Map address length
         tok = strtok(NULL, DELIM);
         if (tok == NULL || strlen(tok) == 0) {
-    	    printf("VME region [%8.8X-%8.8X] is mapped at local address %8.8X\n",
+           printf("VME region [%8.8X-%8.8X] is mapped at local address %p\n",
     		map->addr, map->addr + map->len - 1, map->ptr);
 	    break;
 	}
@@ -860,7 +897,7 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
 	    break;
 	}
 	len = strtoul(tok, NULL, 16);
-	Map(addr, len, map, fd);
+	Map(addr, len, map, fd, master);
 	break;
     case 'N':
         if (map->ptr == NULL) {
@@ -993,6 +1030,58 @@ int Process(char *cmd, int fd, VMEMAP *map, char mode)
     return 0;
 }
 
+int SpaceFromString(const char *str, u32 *aspace)
+{
+    int rc = 0;
+
+    if (strcasecmp(str, "A16") == 0) *aspace = VME_A16;
+    else if (strcasecmp(str, "A24") == 0) *aspace = VME_A24;
+    else if (strcasecmp(str, "A32") == 0) *aspace = VME_A32;
+    else if (strcasecmp(str, "A64") == 0) *aspace = VME_A64;
+    else if (strcasecmp(str, "CRCSR") == 0) *aspace = VME_CRCSR;
+    else rc = 1;
+
+    return rc;
+}
+
+const char* StringFromSpace(u32 aspace)
+{
+    switch(aspace)
+    {
+    case VME_A16: return "A16";
+    case VME_A24: return "A24";
+    case VME_A32: return "A32";
+    case VME_A64: return "A64";
+    case VME_CRCSR: return "CRCSR";
+    default: return "UNKNOWN";
+    }
+}
+
+int WidthFromString(const char *str, u32 *dwidth)
+{
+    int rc = 0;
+
+    if (strcasecmp(str, "D8") == 0) *dwidth = VME_D8;
+    else if (strcasecmp(str, "D16") == 0) *dwidth = VME_D16;
+    else if (strcasecmp(str, "D32") == 0) *dwidth = VME_D32;
+    else if (strcasecmp(str, "D64") == 0) *dwidth = VME_D64;
+    else rc = 1;
+
+    return rc;
+}
+
+const char* StringFromWidth(u32 dwidth)
+{
+    switch(dwidth)
+    {
+    case VME_D8: return "D8";
+    case VME_D16: return "D16";
+    case VME_D32: return "D32";
+    case VME_D64: return "D64";
+    default: return "UNKNOWN";
+    }
+}
+
 int main(int argc, char **argv)
 {
     int fd;
@@ -1002,21 +1091,22 @@ int main(int argc, char **argv)
     char tok[256];
     char *ptr;
     VMEMAP map = {0, 0, NULL};
-    char mode;	// Long - D32, Short - D16, Char - D8
-    VME4L_SPACE spc, spcr;
-    vmeaddr_t vmeaddr;
+    struct vme_master master;
     int i, j;
-    
-    spc = VME4L_SPC_A32_D32;
-    mode = 'L';
+ 
+    master.enable = 1;
+    master.aspace = VME_A32;
+    master.cycle = VME_USER | VME_DATA;
+    master.dwidth = VME_D32;
+
     for (i=1; i<argc; i++) {
 	if (argv[i][0] == '-') switch (toupper(argv[i][1])) {
 	case 'H':
 	    Help();
 	    goto Quit;
-	case 'M':
-	    mode = toupper(argv[i][2]);
-	    if (mode != 'L' && mode != 'S' && mode != 'C') {
+	case 'W':
+            if (WidthFromString(&argv[i][2], &master.dwidth) != 0)
+            {
 		printf("Unknown mode: %s\n", argv[i]);
 		Help();
 		goto Quit;
@@ -1026,8 +1116,8 @@ int main(int argc, char **argv)
 	    quiet = 1;
 	    break;
 	case 'S':
-	    spc = strtol(&argv[i][2], NULL, 0);
-	    if (spc < 0 || spc >= 30) {
+            if (SpaceFromString(&argv[i][2], &master.aspace) != 0)
+            {
 		printf("Unknown space: %s\n", argv[i]);
 		Help();
 		goto Quit;
@@ -1043,17 +1133,14 @@ int main(int argc, char **argv)
     }
 
     if (!quiet) 
-	printf("\n\n\t\tManual VME controller: %s - %c\n\t\t\tSvirLex 2012\n\n", VME4L_SpaceName(spc), mode);
+	printf("\n\n\t\tManual VME controller: %s - %s\n\t\t\tSvirLex 2012\n\n",
+            StringFromSpace(master.aspace), StringFromWidth(master.dwidth));
 //	Open VME
-    fd = VME4L_Open(spc);
+    fd = open("/dev/bus/vme/m0", O_RDWR);
     if (fd < 0) {
 	printf("FATAL - can not open VME - %m\n");
+        printf("Try running:\n\tmodprobe vme\n\tmodprobe vme_tsi148\n\tmodprobe vme_user bus=0\n");
 	return fd;
-    }
-    rc = VME4L_SwapModeSet(fd, SWAP_MODE);
-    if (rc) {
-	printf("FATAL - can not set swap mode - %m\n");
-	goto Quit;
     }
 
     if (command) {
@@ -1073,7 +1160,7 @@ int main(int argc, char **argv)
 		}
 	    }
 	    if (j < sizeof(tok)-1) {
-		Process(tok, fd, &map, mode);
+		Process(tok, fd, &map, &master);
 	    } else {
 		printf("The single operation is too long: %s\n", ptr);
 		break;
@@ -1083,18 +1170,24 @@ int main(int argc, char **argv)
 	for(;;) {
 	    if (cmd) free(cmd);
 	    cmd = readline("VmeBur (H-help)>");
-	    if (cmd == NULL || strlen(cmd) == 0) continue;
+	    if (cmd == NULL)
+            {
+                printf("\n");
+                break;
+            }
+	    if (strlen(cmd) == 0) continue;
 	    add_history(cmd);
-	    if (Process(cmd, fd, &map, mode)) break;
-	    rc = VME4L_BusErrorGet(fd, &spcr, &vmeaddr, 1 );
-	    if (rc) printf("VME BUS ERROR: rc=%d @ spc=%d addr=0x%X\n", rc, spcr, vmeaddr);
+	    if (Process(cmd, fd, &map, &master)) break;
+//          TODO: provide error detection interface for vme_user
+//	    rc = VME4L_BusErrorGet(fd, &spcr, &vmeaddr, 1 );
+//	    if (rc) printf("VME BUS ERROR: rc=%d @ spc=%d addr=0x%X\n", rc, spcr, vmeaddr);
 	}
     }
 Quit:
     
-//	Close VME	
-    if (map.ptr != NULL) VME4L_UnMap(fd, map.ptr, map.len);
-    VME4L_Close(fd);
+//	Close VME
+    if (map.mmap_ptr != NULL) munmap(map.mmap_ptr, map.len);
+    close(fd);
     if (cmd) free(cmd);
     return 0;
 }
