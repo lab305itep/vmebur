@@ -570,6 +570,7 @@ void GetEvents(VMEMAP *map, int addr, int N, char * tok)
     volatile unsigned int *regfifo;
     unsigned int buf[0x2000];
     
+    
     f = fopen(((tok && strlen(tok) > 0) ? tok : "fifo.dat"), "wb");
     if (!f) {
 	printf("Can not open file %s for writing.\n", tok);
@@ -581,7 +582,12 @@ void GetEvents(VMEMAP *map, int addr, int N, char * tok)
     
     *regfifo = 0;		// reset FIFO
     
-    for (L = 0; L < N; L += len) {
+    for (L = 0, LL = 0; L < N; L += len) {
+	if (L - LL > N / 100) {
+	    printf(".");
+	    fflush(stdout);
+	    LL = L;
+	}
 	len = SWAP(*regfilled);
 	if (len & 0x80000000) {		// overflow
 	    printf("Fifo overflow\n");
@@ -595,6 +601,7 @@ void GetEvents(VMEMAP *map, int addr, int N, char * tok)
 	fwrite(buf, sizeof(int), len, f);
     }
 
+    printf("\n");
     fclose(f);
 }
 
@@ -629,7 +636,7 @@ void Help(void)
     printf("X addr[=XXXX] - interXilinx SPI read/write;\n");
     printf("AAAA[=XXXX] - read address AAAA / write XXXX to AAAA.\n");
     printf("Only the first letter of the command is decoded.\n");
-    printf("ALL (!) input numbers are hexadecimal.\n");
+    printf("ALL (!) input numbers are hexadecimal. Commands are case insensitive\n");
 }
 
 unsigned long long GetMaxAddr(unsigned aspace)
