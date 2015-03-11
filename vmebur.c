@@ -27,6 +27,8 @@
 #define SI5338ADR	0x70	// Si5338 I2C address
 #define SITMOUT		100	// Si5338 timeout
 #define ADCSPI		0	// ADC SPI controller registers base
+#define MEMTEST		0x10100	// wb_tmem base addr
+#define MEMSIZE		0x8000000	// DDR3 memory size in dwords
 
 int quiet = 0;
 
@@ -138,42 +140,98 @@ void RegTest(int N, unsigned repeat, VMEMAP *map)
     printf("Test finished with %d errors.\n", err);
 }
 
-void MemTest(int N, unsigned addr, unsigned len, VMEMAP *map)
+void MemTest(VMEMAP *map, unsigned addr, unsigned len, int blen, int wp, int rp)
 {
     int seed;
-    int i;
-    volatile unsigned *A;
-    volatile unsigned *D;
+    unsigned i, ii, j, todo;
+    volatile unsigned *wc;
+    volatile unsigned *wd;
+    volatile unsigned *rc;
+    volatile unsigned *rd;
     unsigned W, R, R1, R2, R3;
     unsigned err;
+
+    printf("Testing DDR3 memory %8.8X-%8.8X with bursts of %d through ports %d(W) %d(R)\n", addr, addr+len, blen, wp, rp);
+
+    wc = &(map->ptr[MEMTEST/4 + wp*2]);
+    wd = &(map->ptr[MEMTEST/4 + wp*2+1]);
+    rc = &(map->ptr[MEMTEST/4 + 12 + rp*2]);
+    rd = &(map->ptr[MEMTEST/4 + 12 + rp*2+1]);
+
+    // always reset and wait
+    *rd = 0;
+    sleep(1);
+    // check
+    if (SWAP(*wc) != 0x801 || SWAP(*rc) != 0x1) {
+	printf("Memory not initialized. Wport status: %8.8X Rport status %8.8X\n", SWAP(*wc), SWAP(*rc));
+	return;
+    }
     
-    A = &(map->ptr[N*0x40 + 1]);
-    D = &(map->ptr[N*0x40 + 2]);
     seed = time(0);
+
     // Write
-    *A = SWAP(addr);
     srand48(seed);
-    for (i=0; i<len; i++) *D = mrand48();
-    // Read
-    err = 0;
-    *A = SWAP(addr);
-    srand48(seed);
-    for (i=0; i<len; i++) {
-	W = mrand48();
-	R = *D;
-	if (R != W) {
-	    err++;
-	    *A = SWAP(addr+i-1);
-	    R1 = *D;
-	    R2 = *D;
-	    R3 = *D;
-	    *A = SWAP(addr+i+1);
-	    if (err < 100) 
-		printf("%6.6X: R(%8.8X) != W(%8.8X) XOR=%8.8X [%8.8X, %8.8X, %8.8X]\n", 
-		    i, R, W, R^W, R1, R2, R3);
+    for (i=addr, ii=addr; i<addr+len; i+= todo) {
+	todo = blen;
+	if (i+todo > addr+len) todo = addr+len-i;
+	// load data fifo
+	for (j=0; j<todo; j++) *wd = mrand48();
+	// check status
+	if (((SWAP(*wc) >> 4) & 0x7F) != todo) {
+	    printf("\nError loading data FIFO at addr %8.8X: written %d words, status tells %d\n", i, todo, (SWAP(*wc) >> 4));
+	    return;
+	}
+	// initiate write
+	*wc = W = SWAP(i | ((todo-1)  << 27));
+//printf("Wc = %8.8X\n", SWAP(W));
+	// wait and check status
+	for (j=0; j<5; j++) if ((R=SWAP(*wc)) == 0x801 ) break;
+	if (j>= 5) {
+	    printf("\nError executing write at addr %8.8X:  Wstatus %8.8X\n", i, R);
+	    return;
+	}
+	if (i-ii > len/50) { 
+	    printf("w"); 
+	    fflush(stdout); 
+	    ii = i;
 	}
     }
-    printf("ADC16 memory test finished with %d errors\n", err);
+    printf("\r");
+    // Read
+    err = 0;
+    srand48(seed);
+    for (i=addr, ii=addr; i<addr+len; i+= todo) {
+	todo = blen;
+	if (i+todo > addr+len) todo = addr+len-i;
+	// initiate read
+	*rc = W = SWAP(i | ((todo-1)  << 27));
+//printf("Rc = %8.8X\n", SWAP(W));
+	// wait and check status
+	for (j=0; j<5; j++) if ((((R=SWAP(*rc)) >> 4) & 0x7F) == todo ) break;
+	if (j >= 5) {
+	    printf("\nError executing read at addr %8.8X:  Rstatus %8.8X\n", i, R);
+	    return;
+	}
+	// read data fifo and compare
+	for (j=0; j<todo; j++) {
+	    if ((R=*rd) != (W=mrand48())) {
+		printf("\nError at addr %8.8X: W:%8.8X R:%8.8X", i+j, W, R);
+	        fflush(stdout); 
+		err++;
+	    }
+	}
+	// check status
+	if (SWAP(*rc) != 0x1) {
+	    printf("\nFIFO not empy after readingat addr %8.8X: status %8.8X\n", i, SWAP(*rc));
+	    return;
+	}
+	if (i-ii > len/50) { 
+	    printf("r"); 
+	    fflush(stdout); 
+	    ii = i;
+	}
+    }
+    printf("\nDDR3 memory test finished with %d errors\n", err);
 }
 
 int I2CRead(VMEMAP *map, int addr)
@@ -774,7 +832,7 @@ void Help(void)
     printf("Q - quit;\n");
     printf("R N [repeat] - test read/write a pair of ADC16 registers (addr/trgicnt) for module N;\n");
     printf("S data [data2] - write data and optionally data2 to local DAC;\n");
-    printf("T N [addr [len]] - test ADC16 memory for module N;\n");
+    printf("T [addr [len [burstlen [wport rport]]]] - test wfd125 DDR3 memory up to 128M 32-bit words\n");
     printf("W [N] - wait N us, if no N - 1 ms;\n");
     printf("X addr[=XXXX] - interXilinx SPI read/write;\n");
     printf("AAAA[=XXXX] - read address AAAA / write XXXX to AAAA.\n");
@@ -851,7 +909,7 @@ int Process(char *cmd, int fd, VMEMAP *map, struct vme_master *master)
 {
     const char DELIM[] = " \t\n\r:=";
     char *tok;
-    unsigned addr, len;
+    unsigned addr, len, blen, wp, rp;
     int N, M;
 
     tok = strtok(cmd, DELIM);
@@ -1140,20 +1198,39 @@ int Process(char *cmd, int fd, VMEMAP *map, struct vme_master *master)
 	    break;
 	}
 	addr = 0;
-	len = 0x800000;	// 32 Mbytes = 8 Mdwords
-	tok = strtok(NULL, DELIM);
-	if (tok == NULL || strlen(tok) == 0) {
-	    printf("Unit number is mandatory.\n");
-	    break;
-	}
-	N = 0x1F & strtol(tok, NULL, 16);
+	len = MEMSIZE;	// 128M dwords
+	blen = 32;
+	wp = 0;
+	rp = 0;
 	tok = strtok(NULL, DELIM);
 	if (tok != NULL && strlen(tok) != 0) {
 	    addr = strtoul(tok, NULL, 16);
 	    tok = strtok(NULL, DELIM);
-	    if (tok != NULL && strlen(tok) != 0) len = strtoul(tok, NULL, 16);
+	    if (tok != NULL && strlen(tok) != 0) {
+		len = strtoul(tok, NULL, 16);
+		tok = strtok(NULL, DELIM);
+		if (tok != NULL && strlen(tok) != 0) {
+		    blen = strtoul(tok, NULL, 16);
+		    tok = strtok(NULL, DELIM);
+		    if (tok != NULL && strlen(tok) != 0) {
+			wp = strtoul(tok, NULL, 16);
+			if (wp < 0) wp = 0;
+			if (wp > 5) wp = 5;
+			tok = strtok(NULL, DELIM);
+			if (tok != NULL && strlen(tok) != 0) {
+			    rp = strtoul(tok, NULL, 16);
+			    if (rp < 0) rp = 0;
+			    if (rp > 1) rp = 1;
+			}
+		    }
+		}
+	    }
 	}
-	MemTest(N, addr, len, map);
+	if (addr+len > MEMSIZE) len = MEMSIZE - addr;
+	if (blen > len) blen = len;
+	if (blen < 1 ) blen = 1;
+	if (blen > 32) blen = 32;
+	MemTest(map, addr, len, blen, wp, rp);
 	break;
     case 'W' :	// wait us
 	tok = strtok(NULL, DELIM);

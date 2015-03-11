@@ -9,11 +9,9 @@ if [ $? == 0 ] ; then
     echo Sleeping...
     sleep 1
     ./progcsr.sh
-    if [ "x"$1 != "x-c" ] ; then
-	./pwdadc.sh
-	./clockenb.sh
-	./resetadc.sh
-    fi
+    ./pwdadc.sh
+    ./clockenb.sh
+    ./resetadc.sh
     ./settrig.sh
 else
     ../cpldtool/cpldtool ${num} p
