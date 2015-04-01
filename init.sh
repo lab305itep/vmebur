@@ -1,7 +1,7 @@
 #!/bin/bash
 num=${1-1}
 ga=${2-$num}
-printf -v ba "%X" $(( 0x$ga << 25))
+printf -v ba "%X" $(( 0x$ga << 20))
 echo Trying module serial=0x$num with geographical 0x$ga, base addr is 0x$ba
 printf -v dnum "%d" $(( 0x$num ))
 
