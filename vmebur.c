@@ -140,7 +140,7 @@ void RegTest(int N, unsigned repeat, VMEMAP *map)
     printf("Test finished with %d errors.\n", err);
 }
 
-void MemTest(VMEMAP *map, unsigned addr, unsigned len, int blen, int wp, int rp)
+void MemTestRegs(VMEMAP *map, unsigned addr, unsigned len, int blen, int wp, int rp)
 {
     int seed;
     unsigned i, ii, j, todo;
@@ -233,6 +233,65 @@ void MemTest(VMEMAP *map, unsigned addr, unsigned len, int blen, int wp, int rp)
     }
     printf("\nDDR3 memory test finished with %d errors\n", err);
 }
+
+
+void MemTestWB(VMEMAP *map, unsigned addr, unsigned len)
+{
+    int seed;
+    unsigned i, ii, j;
+    volatile unsigned *ptr;
+    unsigned W, R;
+    unsigned err;
+    unsigned leng;
+
+    leng = len;
+    if (addr + len > map->len) {
+	leng = map->len - addr;
+	printf("Can only test in the currently mapped window\n");
+    }
+    printf("Testing DDR3 memory %8.8X-%8.8X through VME A64 and WB RAM acess\n", addr, addr+leng);
+
+    ptr = &(map->ptr[0]);
+
+    // always reset and wait
+    // not yet implemented
+    //sleep(1);
+    // check
+
+    seed = time(0);
+
+    // Write sequentially
+    srand48(seed);
+    
+    for (i=addr/4, ii=addr/4; i<(addr+leng)/4; i++) {
+	ptr[i] = mrand48();
+	if (i-ii > leng/200) { 
+	    printf("w"); 
+	    fflush(stdout); 
+	    ii = i;
+	}
+    }
+    printf("\r");
+    
+    // Read sequentially
+    err = 0;
+    srand48(seed);
+    for (i=addr/4, ii=addr/4; i<(addr+leng)/4; i++) {
+	if ((R=ptr[i]) != (W=mrand48())) {
+	    printf("\nError at addr %8.8X: W:%8.8X R:%8.8X", i*4, W, R);
+	    fflush(stdout); 
+	    err++;
+	}
+	if (i-ii > leng/200) { 
+	    printf("r"); 
+	    fflush(stdout); 
+	    ii = i;
+	}
+    }
+    printf("\nSequential DDR3 memory test finished with %d errors\n", err);
+
+}
+
 
 int I2CRead(VMEMAP *map, int addr)
 {
@@ -1230,7 +1289,13 @@ int Process(char *cmd, int fd, VMEMAP *map, struct vme_master *master)
 	if (blen > len) blen = len;
 	if (blen < 1 ) blen = 1;
 	if (blen > 32) blen = 32;
-	MemTest(map, addr, len, blen, wp, rp);
+	if (master->aspace == VME_A32) {
+	    MemTestRegs(map, addr, len, blen, wp, rp);
+	} else if (master->aspace == VME_A64) {
+	    MemTestWB(map, addr, len);
+	} else {
+	    printf("ERROR: To run memory tests address space must be A64 (WB) or A32 (wb_tmem regs)\n");
+	}
 	break;
     case 'W' :	// wait us
 	tok = strtok(NULL, DELIM);
