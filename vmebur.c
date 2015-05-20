@@ -1234,7 +1234,7 @@ int Process(char *cmd, int fd, VMEMAP *map, struct vme_master *master)
 	    break;
 	}
 	if (DACSPI+8 > map->len) {
-	    printf("ICX SPI registers (%8.8X) above the mapped length (%8.8X)\n", DACSPI+8, map->len);
+	    printf("DAC SPI registers (%8.8X) above the mapped length (%8.8X)\n", DACSPI+8, map->len);
 	    break;
 	}
 	N = strtoul(tok, NULL, 16) & 0xFFFF;

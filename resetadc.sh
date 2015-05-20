@@ -1,13 +1,22 @@
 #!/bin/bash
 #	Soft reset all ADCs
 #
-ba=$1
-if [ $ba"x" == "x" ] ; then ba="0" ; fi 
+ba=${1-0}
+ph=${2-3}
+# clear power down
 ./vmebur -q "m $ba 2000000;g 0 8=0;g 1 8=0;g 2 8=0;g 3 8=0;g 4 8=0;g 5 8=0;g 6 8=0;g 7 8=0;"
 ./vmebur -q "m $ba 2000000;g 8 8=0;g 9 8=0;g A 8=0;g B 8=0;g C 8=0;g D 8=0;g E 8=0;g F 8=0;"
-sleep 1
+# do reset
+./vmebur -q "m $ba 2000000;g 0 8=3;g 1 8=3;g 2 8=3;g 3 8=3;g 4 8=3;g 5 8=3;g 6 8=3;g 7 8=3;"
+./vmebur -q "m $ba 2000000;g 8 8=3;g 9 8=3;g A 8=3;g B 8=3;g C 8=3;g D 8=3;g E 8=3;g F 8=3;"
+# goto normal
+./vmebur -q "m $ba 2000000;g 0 8=0;g 1 8=0;g 2 8=0;g 3 8=0;g 4 8=0;g 5 8=0;g 6 8=0;g 7 8=0;"
+./vmebur -q "m $ba 2000000;g 8 8=0;g 9 8=0;g A 8=0;g B 8=0;g C 8=0;g D 8=0;g E 8=0;g F 8=0;"
 ./vmebur -q "m $ba 2000000;g 0 0=24;g 1 0=24;g 2 0=24;g 3 0=24;g 4 0=24;g 5 0=24;g 6 0=24;g 7 0=24;"
 ./vmebur -q "m $ba 2000000;g 8 0=24;g 9 0=24;g A 0=24;g B 0=24;g C 0=24;g D 0=24;g E 0=24;g F 0=24;"
+# set output phase
+./vmebur -q "m $ba 2000000;g 0 16=$ph;g 1 16=$ph;g 2 16=$ph;g 3 16=$ph;g 4 16=$ph;g 5 16=$ph;g 6 16=$ph;g 7 16=$ph;"
+./vmebur -q "m $ba 2000000;g 8 16=$ph;g 9 16=$ph;g A 16=$ph;g B 16=$ph;g C 16=$ph;g D 16=$ph;g E 16=$ph;g F 16=$ph;"
 ./vmebur -q "m $ba 2000000;g 0 14=0;g 1 14=0;g 2 14=0;g 3 14=0;g 4 14=0;g 5 14=0;g 6 14=0;g 7 14=0;"
 ./vmebur -q "m $ba 2000000;g 8 14=0;g 9 14=0;g A 14=0;g B 14=0;g C 14=0;g D 14=0;g E 14=0;g F 14=0;"
 ./vmebur -q "m $ba 2000000;g 0 D=5;g 1 D=5;g 2 D=5;g 3 D=5;g 4 D=5;g 5 D=5;g 6 D=5;g 7 D=5;"
