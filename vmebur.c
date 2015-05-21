@@ -829,7 +829,7 @@ void GetEvents(VMEMAP *map, int addr, int N, char * tok)
     volatile unsigned int *regfilled;
     volatile unsigned int *regfifo;
     unsigned int buf[0x2000];
-    
+    time_t tmr;
     
     f = fopen(((tok && strlen(tok) > 0) ? tok : "fifo.dat"), "wb");
     if (!f) {
@@ -842,8 +842,15 @@ void GetEvents(VMEMAP *map, int addr, int N, char * tok)
     
     *regfifo = 0;		// reset FIFO
     
-    for (L = 0, LL = 0; L < N; L += len) {
-	if (L - LL > N / 100) {
+    LL = 0;
+    tmr = time(NULL);
+    for (L = 0;; L += len) {
+	if (N >= 0) {
+	    if (L > N) break;
+	} else {
+	    if (time(NULL) > tmr - N) break;
+	}
+	if (L - LL > 20000) {
 	    printf(".");
 	    fflush(stdout);
 	    LL = L;
@@ -886,7 +893,7 @@ void Help(void)
     printf("K N clkregfile.txt - load SI5338 configuration file to 16-chan block N;\n");
     printf("L xil&addr[=XX] - remoute I2C read/write;\n");
     printf("M [addr len] - map a region (query mapping);\n");
-    printf("N xil num [file.dat] - get num 32 bit words from FIFO for xil to file;\n");
+    printf("N xil num[s] [file.dat] - get num 32 bit words  from FIFO (or run for num seconds) for xil to file;\n");
     printf("P [addr [len]] - dump the region. Address is counted from mapped start. 32-bit operations only.\n");
     printf("Q - quit;\n");
     printf("R N [repeat] - test read/write a pair of ADC16 registers (addr/trgicnt) for module N;\n");
@@ -1187,6 +1194,7 @@ int Process(char *cmd, int fd, VMEMAP *map, struct vme_master *master)
 	    break;
 	}
 	N = strtoul(tok, NULL, 16);
+	if (toupper(tok[strlen(tok) - 1]) == 'S') N = -N;
 	tok = strtok(NULL, DELIM);
 	GetEvents(map, addr, N, tok);
 	break;	

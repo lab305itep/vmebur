@@ -1,4 +1,4 @@
-void doplots(char *name)
+void doplots(char *name, int xil)
 {
 	TFile *f;
 	TCanvas *cv;
@@ -18,7 +18,7 @@ void doplots(char *name)
 			cv->Divide(2, 3);
 		}
 		cv->cd((i%6)+1);
-		sprintf(str, "HA%2.2d", i);
+		sprintf(str, "HA%2.2d", i + 16*xil);
 		h = (TH1D *)f->Get(str);
 		if (h) {
 			h->GetXaxis()->SetRange(80, 200);
